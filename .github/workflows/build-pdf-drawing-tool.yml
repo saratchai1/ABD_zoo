@@ -1,0 +1,53 @@
+name: Build PDF Drawing Tool
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'pdf-drawing-tool/**'
+      - '.github/workflows/build-pdf-drawing-tool.yml'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: pdf-drawing-tool
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Syntax check
+        run: python -m py_compile main.py pdf_ops.py
+
+      - name: Build portable EXE
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name "PDF Drawing Tool" main.py
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup -y --no-progress
+
+      - name: Build Setup EXE
+        shell: powershell
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss'
+
+      - name: Upload portable EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDF-Drawing-Tool-Portable
+          path: pdf-drawing-tool/dist/PDF Drawing Tool.exe
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDF-Drawing-Tool-Setup
+          path: pdf-drawing-tool/installer_output/PDF_Drawing_Tool_Setup.exe
