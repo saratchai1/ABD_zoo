@@ -27,10 +27,16 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Syntax check
-        run: python -m py_compile main.py pdf_ops.py
+        run: python -m py_compile main.py fast_main.py pdf_ops.py
 
-      - name: Build portable EXE
-        run: pyinstaller --noconfirm --clean --onefile --windowed --name "PDF Drawing Tool" main.py
+      - name: Build fast onedir app
+        run: pyinstaller --noconfirm --clean --onedir --windowed --name "PDF Drawing Tool" fast_main.py
+
+      - name: Smoke check built EXE
+        shell: powershell
+        run: |
+          if (-not (Test-Path "dist\PDF Drawing Tool\PDF Drawing Tool.exe")) { throw "Built EXE not found" }
+          Get-ChildItem "dist\PDF Drawing Tool" | Select-Object -First 10
 
       - name: Install Inno Setup
         shell: powershell
@@ -40,14 +46,14 @@ jobs:
         shell: powershell
         run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss'
 
-      - name: Upload portable EXE
+      - name: Upload portable app folder
         uses: actions/upload-artifact@v4
         with:
-          name: PDF-Drawing-Tool-Portable
-          path: pdf-drawing-tool/dist/PDF Drawing Tool.exe
+          name: PDF-Drawing-Tool-V2.4-Portable
+          path: pdf-drawing-tool/dist/PDF Drawing Tool/**
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: PDF-Drawing-Tool-Setup
+          name: PDF-Drawing-Tool-V2.4-Setup
           path: pdf-drawing-tool/installer_output/PDF_Drawing_Tool_Setup.exe
