@@ -27,15 +27,20 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Syntax check
-        run: python -m py_compile main.py fast_main.py pdf_ops.py
+        run: python -m py_compile main.py fast_main.py centered_main.py pdf_ops.py
 
       - name: Performance regression check
         shell: powershell
         run: |
           python -c "import ast,inspect,textwrap,fast_main; src='\n'.join([inspect.getsource(fast_main.FastEditorTab.add_files),inspect.getsource(fast_main.FastEditorTab.rebuild_pages)]); tree=ast.parse(textwrap.dedent(src)); bad=[]; [bad.append('page_count') for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='page_count']; [bad.append('fitz.open') for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and isinstance(n.func.value,ast.Name) and n.func.value.id=='fitz' and n.func.attr=='open']; assert not bad, bad; print(fast_main.APP_NAME, 'async-load AST check OK')"
 
-      - name: Build fast onedir app
-        run: pyinstaller --noconfirm --clean --onedir --windowed --name "PDF Drawing Tool" fast_main.py
+      - name: Sheet centering regression check
+        shell: powershell
+        run: |
+          python -c "from centered_main import centered_write_box; d={'box_norm':[0.40,0.70,0.60,0.80],'number_box_norm':[0.51,0.71,0.59,0.79]}; w=centered_write_box(d); assert abs(((w[0]+w[2])/2)-0.50)<1e-9, w; assert abs(((d['number_box_norm'][0]+d['number_box_norm'][2])/2)-0.55)>0.01; print('sheet center check OK', w)"
+
+      - name: Build fast centered onedir app
+        run: pyinstaller --noconfirm --clean --onedir --windowed --name "PDF Drawing Tool" centered_main.py
 
       - name: Smoke check built EXE
         shell: powershell
@@ -54,11 +59,11 @@ jobs:
       - name: Upload portable app folder
         uses: actions/upload-artifact@v4
         with:
-          name: PDF-Drawing-Tool-V2.4.1-Portable
+          name: PDF-Drawing-Tool-V2.4.2-Portable
           path: pdf-drawing-tool/dist/PDF Drawing Tool/**
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: PDF-Drawing-Tool-V2.4.1-Setup
+          name: PDF-Drawing-Tool-V2.4.2-Setup
           path: pdf-drawing-tool/installer_output/PDF_Drawing_Tool_Setup.exe
