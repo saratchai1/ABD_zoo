@@ -5,15 +5,16 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QTabWidget
 
 import fast_main
 import main as legacy
+from dark_theme import install_dark_theme
 
-APP_NAME = "PDF Drawing Tool V2.4.2"
+APP_NAME = "PDF Drawing Tool V2.5 — Dark CAD"
 SETTINGS_ORG = "TEAMG"
 
 
 def centered_write_box(detected):
     """Return a narrow write box centered on the entire sheet-number cell.
 
-    The erase box remains the conservative right-side number area.  This
+    The erase box remains the conservative right-side number area. This
     separates two concerns:
       * erase safely without touching the printed 'แผ่นที่ :' label
       * place the replacement number at the true horizontal center of the cell
@@ -94,11 +95,15 @@ class CenteredPDFDrawingTool(QMainWindow):
         super().__init__()
         self.setWindowTitle(APP_NAME)
         self.resize(1600, 920)
+        self.setMinimumSize(1180, 720)
+
         tabs = QTabWidget()
         tabs.addTab(CenteredEditorTab(), "Editor")
         tabs.addTab(legacy.MergeTab(), "Merge")
         tabs.addTab(legacy.SplitTab(), "Split")
         self.setCentralWidget(tabs)
+
+        self.statusBar().showMessage("Ready  •  Dark CAD Theme")
 
 
 if __name__ == "__main__":
@@ -106,5 +111,6 @@ if __name__ == "__main__":
     app.setOrganizationName(SETTINGS_ORG)
     app.setApplicationName(APP_NAME)
     window = CenteredPDFDrawingTool()
+    install_dark_theme(app, window)
     window.show()
     sys.exit(app.exec())
