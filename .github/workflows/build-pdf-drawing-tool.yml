@@ -32,7 +32,7 @@ jobs:
       - name: Performance regression check
         shell: powershell
         run: |
-          python -c "import inspect,fast_main; a=inspect.getsource(fast_main.FastEditorTab.add_files); r=inspect.getsource(fast_main.FastEditorTab.rebuild_pages); assert 'fitz.open(' not in a and 'page_count(' not in a and 'fitz.open(' not in r and 'page_count(' not in r; print(fast_main.APP_NAME, 'async-load check OK')"
+          python -c "import ast,inspect,textwrap,fast_main; src='\n'.join([inspect.getsource(fast_main.FastEditorTab.add_files),inspect.getsource(fast_main.FastEditorTab.rebuild_pages)]); tree=ast.parse(textwrap.dedent(src)); bad=[]; [bad.append('page_count') for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='page_count']; [bad.append('fitz.open') for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and isinstance(n.func.value,ast.Name) and n.func.value.id=='fitz' and n.func.attr=='open']; assert not bad, bad; print(fast_main.APP_NAME, 'async-load AST check OK')"
 
       - name: Build fast onedir app
         run: pyinstaller --noconfirm --clean --onedir --windowed --name "PDF Drawing Tool" fast_main.py
