@@ -13,12 +13,12 @@ from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QApplication, QListWidgetItem, QMainWindow, QMessageBox, QTabWidget
 
 import main as legacy
-from pdf_ops import detect_sheet_number_box, export_editor, page_count
+from pdf_ops import detect_sheet_number_box, export_editor
 
-APP_NAME = "PDF Drawing Tool V2.4"
+APP_NAME = "PDF Drawing Tool V2.4.1"
 SETTINGS_ORG = "TEAMG"
 SETTINGS_CACHE_KEY = "performance/font_registry_cache_v24"
-RENDER_SCALE = 1.25
+RENDER_SCALE = 1.20
 RENDER_CACHE_PAGES = 6
 
 
@@ -41,13 +41,46 @@ def cached_font_registry_map():
             pass
     fonts = _original_font_registry_map()
     try:
-        settings.setValue(SETTINGS_CACHE_KEY, json.dumps({"saved_at": time.time(), "fonts": fonts}, ensure_ascii=False))
+        settings.setValue(
+            SETTINGS_CACHE_KEY,
+            json.dumps({"saved_at": time.time(), "fonts": fonts}, ensure_ascii=False),
+        )
     except Exception:
         pass
     return fonts
 
 
 legacy.font_registry_map = cached_font_registry_map
+
+
+def file_signature(path):
+    try:
+        stat = os.stat(path)
+        return (int(stat.st_mtime_ns), int(stat.st_size))
+    except OSError:
+        return None
+
+
+class InventoryJob(QThread):
+    """Open PDFs and count pages away from the GUI thread."""
+    result = Signal(int, object, object)
+
+    def __init__(self, generation, paths, parent=None):
+        super().__init__(parent)
+        self.generation = generation
+        self.paths = list(paths)
+
+    def run(self):
+        counts = {}
+        errors = {}
+        for path in self.paths:
+            try:
+                with fitz.open(path) as doc:
+                    count = int(doc.page_count)
+                counts[path] = (file_signature(path), count)
+            except Exception as exc:
+                errors[path] = str(exc)
+        self.result.emit(self.generation, counts, errors)
 
 
 class RenderJob(QThread):
@@ -65,7 +98,10 @@ class RenderJob(QThread):
         try:
             with fitz.open(self.path) as doc:
                 page = doc[self.page_index]
-                pix = page.get_pixmap(matrix=fitz.Matrix(RENDER_SCALE, RENDER_SCALE), alpha=False)
+                pix = page.get_pixmap(
+                    matrix=fitz.Matrix(RENDER_SCALE, RENDER_SCALE),
+                    alpha=False,
+                )
                 image = QImage(
                     pix.samples,
                     pix.width,
@@ -132,6 +168,9 @@ class ExportJob(QThread):
 class FastEditorTab(legacy.EditorTab):
     def __init__(self):
         self._page_count_cache = {}
+        self._inventory_generation = 0
+        self._inventory_queue = []
+        self._inventory_job = None
         self._render_cache = OrderedDict()
         self._render_inflight = set()
         self._render_token = 0
@@ -145,17 +184,22 @@ class FastEditorTab(legacy.EditorTab):
 
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
-        self._render_timer.setInterval(45)
+        self._render_timer.setInterval(35)
         self._render_timer.timeout.connect(self._launch_pending_render)
 
         self._redraw_timer = QTimer(self)
         self._redraw_timer.setSingleShot(True)
-        self._redraw_timer.setInterval(120)
+        self._redraw_timer.setInterval(140)
         self._redraw_timer.timeout.connect(self.draw_elements)
 
+        self._auto_detect_timer = QTimer(self)
+        self._auto_detect_timer.setSingleShot(True)
+        self._auto_detect_timer.setInterval(600)
+        self._auto_detect_timer.timeout.connect(self._launch_idle_auto_detect)
+
         self.measure_label.setText(
-            "V2.4 Fast: PDF preview is cached; Auto Detect and Export run in background. "
-            "Sheet No. replaces the old number automatically."
+            "V2.4.1: loading, page count, preview, Auto Detect and Export all run outside the UI thread. "
+            "The window should stay responsive while a PDF is being opened."
         )
 
     def _track_job(self, job):
@@ -173,37 +217,81 @@ class FastEditorTab(legacy.EditorTab):
         return job
 
     def _file_signature(self, path):
-        try:
-            stat = os.stat(path)
-            return (int(stat.st_mtime_ns), int(stat.st_size))
-        except OSError:
-            return None
+        return file_signature(path)
 
     def _cached_page_count(self, path):
+        """Never opens the PDF. Only returns metadata already produced by InventoryJob."""
         signature = self._file_signature(path)
         cached = self._page_count_cache.get(path)
         if cached and cached[0] == signature:
             return cached[1]
-        count = page_count(path)
-        self._page_count_cache[path] = (signature, count)
-        return count
+        return None
 
     def add_files(self, paths):
         existing = set(self.file_list.paths())
+        new_paths = []
         for path in paths:
             if path in existing:
                 continue
-            try:
-                count = self._cached_page_count(path)
-            except Exception as exc:
-                QMessageBox.warning(self, "PDF error", str(exc))
-                continue
-            item = QListWidgetItem(f"{Path(path).name} ({count} pages)")
+            item = QListWidgetItem(f"{Path(path).name} (loading…)")
             item.setData(legacy.Qt.ItemDataRole.UserRole, path)
             self.file_list.addItem(item)
             existing.add(path)
+            new_paths.append(path)
+
+        if not new_paths:
+            return
+
         self._render_cache.clear()
+        self.total_label.setText(f"Reading PDF metadata… {len(new_paths)} file(s)")
+        self.page_label.setText("Opening PDF in background…")
+        self._inventory_queue.extend(new_paths)
+        self._start_inventory_if_needed()
+
+    def _start_inventory_if_needed(self):
+        if self._inventory_job and self._inventory_job.isRunning():
+            return
+        if not self._inventory_queue:
+            return
+
+        batch = self._inventory_queue[:]
+        self._inventory_queue.clear()
+        generation = self._inventory_generation
+        job = InventoryJob(generation, batch, self)
+        self._inventory_job = job
+        job.result.connect(self._on_inventory_result)
+        self._track_job(job)
+
+    def _on_inventory_result(self, generation, counts, errors):
+        self._inventory_job = None
+        if generation != self._inventory_generation:
+            self._start_inventory_if_needed()
+            return
+
+        for path, cache_value in counts.items():
+            self._page_count_cache[path] = cache_value
+
+        # Update list labels without touching the PDF again.
+        for row in range(self.file_list.count() - 1, -1, -1):
+            item = self.file_list.item(row)
+            path = item.data(legacy.Qt.ItemDataRole.UserRole)
+            if path in counts:
+                count = counts[path][1]
+                item.setText(f"{Path(path).name} ({count} pages)")
+            elif path in errors:
+                item.setText(f"{Path(path).name} (ERROR)")
+                self.file_list.takeItem(row)
+
+        if errors:
+            first_path = next(iter(errors))
+            QMessageBox.warning(
+                self,
+                "PDF error",
+                f"Could not open {Path(first_path).name}:\n{errors[first_path]}",
+            )
+
         self.rebuild_pages()
+        self._start_inventory_if_needed()
 
     def remove_selected_files(self):
         for item in self.file_list.selectedItems():
@@ -212,26 +300,58 @@ class FastEditorTab(legacy.EditorTab):
         self.rebuild_pages()
 
     def clear_files(self):
+        self._inventory_generation += 1
+        self._inventory_queue.clear()
         self._render_cache.clear()
         self._page_count_cache.clear()
+        self._auto_detect_timer.stop()
         super().clear_files()
 
     def rebuild_pages(self):
         self.pages = []
+        waiting = 0
         for path in self.file_list.paths():
             count = self._cached_page_count(path)
-            self.pages += [(path, i) for i in range(count)]
-        self.total_label.setText(f"{self.file_list.count()} files / {len(self.pages)} pages")
+            if count is None:
+                waiting += 1
+                continue
+            self.pages.extend((path, i) for i in range(count))
+
+        if waiting:
+            self.total_label.setText(
+                f"{self.file_list.count()} files / {len(self.pages)} pages ready — {waiting} loading"
+            )
+        else:
+            self.total_label.setText(f"{self.file_list.count()} files / {len(self.pages)} pages")
+
         self.page_spin.setMaximum(max(1, len(self.pages)))
         self.page_spin.setValue(1)
         self.range_end.setValue(max(1, len(self.pages)))
+
         if self.pages:
             self.render_current_page()
-            if self.auto_detect_on_load.isChecked() and not any(e["type"] == "sheet_number" for e in self.elements):
-                self.auto_detect_sheet_number(True)
+            # Delay auto-detect until the first preview has had a chance to appear.
+            if (
+                not waiting
+                and self.auto_detect_on_load.isChecked()
+                and not any(e["type"] == "sheet_number" for e in self.elements)
+            ):
+                self._auto_detect_timer.start()
+        elif waiting:
+            self.scene.clear()
+            self.page_label.setText("Opening PDF in background…")
         else:
             self.scene.clear()
             self.page_label.setText("Page 0 / 0")
+
+    def _launch_idle_auto_detect(self):
+        if self._inventory_job or self._inventory_queue:
+            self._auto_detect_timer.start()
+            return
+        if self.pages and self.auto_detect_on_load.isChecked() and not any(
+            e["type"] == "sheet_number" for e in self.elements
+        ):
+            self.auto_detect_sheet_number(True)
 
     def _cache_render(self, key, image, page_pts):
         if key in self._render_cache:
@@ -256,7 +376,9 @@ class FastEditorTab(legacy.EditorTab):
             self._display_render(token, key, cached[0], cached[1])
             return
 
-        self.page_label.setText(f"Page {gi + 1}/{len(self.pages)} — rendering {Path(path).name}…")
+        self.page_label.setText(
+            f"Page {gi + 1}/{len(self.pages)} — rendering {Path(path).name} in background…"
+        )
         if hasattr(self, "_render_timer"):
             self._render_timer.start()
         else:
@@ -305,7 +427,7 @@ class FastEditorTab(legacy.EditorTab):
         self.scene.setSceneRect(0, 0, pixmap.width(), pixmap.height())
         self.render_size = (pixmap.width(), pixmap.height())
         self.page_pts = page_pts
-        self.page_label.setText(f"Page {gi + 1}/{len(self.pages)} — {Path(path).name} [cached]")
+        self.page_label.setText(f"Page {gi + 1}/{len(self.pages)} — {Path(path).name}")
         self.draw_elements()
         self.fit_page()
         self._prefetch_next(gi)
@@ -371,7 +493,9 @@ class FastEditorTab(legacy.EditorTab):
         self._detect_silent = True
         self.auto_detect_btn.setEnabled(True)
         if not detected:
-            self.detect_status.setText("Sheet No.: auto detect failed — use Sheet No. and drag around the number area manually.")
+            self.detect_status.setText(
+                "Sheet No.: auto detect failed — use Sheet No. and drag around the number area manually."
+            )
             if not silent:
                 QMessageBox.warning(self, "Not detected", "Could not find the แผ่นที่ cell.")
             self._finish_detect_callbacks(False)
@@ -427,6 +551,9 @@ class FastEditorTab(legacy.EditorTab):
         files = self.file_list.paths()
         if not files or (self._export_job and self._export_job.isRunning()):
             return
+        if self._inventory_job or self._inventory_queue:
+            QMessageBox.information(self, "Please wait", "PDF metadata is still loading in the background.")
+            return
 
         if self.auto_detect_on_load.isChecked() and not any(e["type"] == "sheet_number" for e in self.elements):
             self.auto_detect_sheet_number(True, after=lambda _ok: self._begin_export())
@@ -438,13 +565,22 @@ class FastEditorTab(legacy.EditorTab):
         if not files:
             return
         if not self.elements:
-            QMessageBox.warning(self, "Nothing to export", "Add an object, erase area, or Auto Detect Sheet No. first.")
+            QMessageBox.warning(
+                self,
+                "Nothing to export",
+                "Add an object, erase area, or Auto Detect Sheet No. first.",
+            )
             return
 
         self.sync_sheet_number()
         merge = self.merge_after.isChecked()
         if merge:
-            output, _ = legacy.QFileDialog.getSaveFileName(self, "Save PDF", "Edited_Merged.pdf", "PDF Files (*.pdf)")
+            output, _ = legacy.QFileDialog.getSaveFileName(
+                self,
+                "Save PDF",
+                "Edited_Merged.pdf",
+                "PDF Files (*.pdf)",
+            )
             if not output:
                 return
             if not output.lower().endswith(".pdf"):
