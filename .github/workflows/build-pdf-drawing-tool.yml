@@ -37,7 +37,7 @@ jobs:
       - name: Sheet centering regression check
         shell: powershell
         run: |
-          python -c "from centered_main import centered_write_box; d={'box_norm':[0.40,0.70,0.60,0.80],'number_box_norm':[0.51,0.71,0.59,0.79]}; w=centered_write_box(d); assert abs(((w[0]+w[2])/2)-0.50)<1e-9, w; assert abs(((d['number_box_norm'][0]+d['number_box_norm'][2])/2)-0.55)>0.01; print('sheet center check OK', w)"
+          python -c "from centered_main import centered_write_box; d={'box_norm':[0.40,0.70,0.60,0.80],'number_box_norm':[0.51,0.71,0.59,0.79]}; w=centered_write_box(d); write_center=(w[0]+w[2])/2; erase_center=(d['number_box_norm'][0]+d['number_box_norm'][2])/2; assert abs(write_center-0.50)<1e-9, w; assert abs(erase_center-0.50)>0.01, erase_center; print('sheet center check OK: erase=',erase_center,'write=',write_center)"
 
       - name: Build fast centered onedir app
         run: pyinstaller --noconfirm --clean --onedir --windowed --name "PDF Drawing Tool" centered_main.py
