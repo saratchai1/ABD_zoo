@@ -1,5 +1,5 @@
 #define MyAppName "PDF Drawing Tool"
-#define MyAppVersion "2.4.2"
+#define MyAppVersion "2.5.0"
 #define MyAppExeName "PDF Drawing Tool.exe"
 
 [Setup]
@@ -23,8 +23,8 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: checkedonce
 
 [Files]
-; V2.4.2 keeps the fast onedir runtime and centers auto-detected sheet numbers
-; on the true title-block cell while erasing only the old right-side value.
+; V2.5 keeps the V2.4.2 PDF engine, async loading, and centered sheet-number
+; behavior. Only the desktop presentation layer is redesigned as Dark CAD.
 Source: "dist\PDF Drawing Tool\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
