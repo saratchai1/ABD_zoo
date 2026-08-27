@@ -42,7 +42,7 @@ jobs:
       - name: Dark theme regression check
         shell: powershell
         run: |
-          python -c "import centered_main,dark_theme; q=dark_theme.DARK_STYLESHEET; assert 'V2.5' in centered_main.APP_NAME; assert '#11161d' in q and 'role=\"primary\"' not in q and 'QPushButton[role=\"primary\"]' in q; assert callable(dark_theme.install_dark_theme); print(centered_main.APP_NAME, 'dark-theme check OK')"
+          python -c "import centered_main,dark_theme; q=dark_theme.DARK_STYLESHEET; assert 'V2.5' in centered_main.APP_NAME; assert '#11161d' in q; assert 'QPushButton[role=\"primary\"]' in q; assert 'QTabBar::tab:selected' in q; assert callable(dark_theme.install_dark_theme); print(centered_main.APP_NAME, 'dark-theme check OK')"
 
       - name: Build V2.5 Dark CAD onedir app
         run: pyinstaller --noconfirm --clean --onedir --windowed --name "PDF Drawing Tool" centered_main.py
