@@ -1,5 +1,5 @@
 #define MyAppName "PDF Drawing Tool"
-#define MyAppVersion "2.4.1"
+#define MyAppVersion "2.4.2"
 #define MyAppExeName "PDF Drawing Tool.exe"
 
 [Setup]
@@ -23,8 +23,8 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: checkedonce
 
 [Files]
-; V2.4.1 uses PyInstaller onedir. Installing the extracted runtime once avoids
-; the onefile self-extraction delay on every program launch.
+; V2.4.2 keeps the fast onedir runtime and centers auto-detected sheet numbers
+; on the true title-block cell while erasing only the old right-side value.
 Source: "dist\PDF Drawing Tool\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
