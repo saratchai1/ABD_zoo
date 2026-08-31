@@ -1,6 +1,8 @@
+import copy
 import sys
 import uuid
 
+import fitz
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
@@ -19,8 +21,9 @@ from PySide6.QtWidgets import (
 import fast_main
 import main as legacy
 from dark_theme import install_dark_theme
+from pdf_ops import detect_sheet_number_box_on_page
 
-APP_NAME = "PDF Drawing Tool V2.5.2 — Dark CAD Responsive"
+APP_NAME = "PDF Drawing Tool V2.5.3 — Dark CAD Responsive"
 SETTINGS_ORG = "TEAMG"
 
 
@@ -57,6 +60,30 @@ def centered_write_box(detected):
     return [x1, ey1, x2, ey2]
 
 
+def preview_effective_elements(elements, detected):
+    """Return preview-only elements resolved against the current page.
+
+    V2.5.2 re-detected the cell only during export, so the red dashed preview
+    could still show the stored position from the first detected page. V2.5.3
+    applies the same page-local geometry to the on-screen preview.
+    """
+    if not detected:
+        return elements
+
+    write_box = centered_write_box(detected)
+    erase_box = list(detected.get("number_box_norm") or detected["box_norm"])
+    effective = []
+    for element in elements:
+        if element.get("type") == "sheet_number" and element.get("follow_detected_cell", False):
+            local = copy.deepcopy(element)
+            local["box"] = list(write_box)
+            local["erase_box"] = list(erase_box)
+            effective.append(local)
+        else:
+            effective.append(element)
+    return effective
+
+
 def _separator(parent=None):
     line = QFrame(parent)
     line.setFrameShape(QFrame.Shape.VLine)
@@ -67,9 +94,10 @@ def _separator(parent=None):
 
 
 class CenteredEditorTab(fast_main.FastEditorTab):
-    """V2.5.2 keeps the responsive Dark CAD UI and follows sheet cells per page."""
+    """V2.5.3 follows each page's sheet cell in both preview and export."""
 
     def __init__(self):
+        self._preview_sheet_detection_cache = {}
         super().__init__()
         self._install_responsive_toolbar()
 
@@ -227,6 +255,56 @@ class CenteredEditorTab(fast_main.FastEditorTab):
         self.measure_label.setWordWrap(True)
         self.measure_label.setMaximumHeight(48)
 
+    def _current_page_sheet_detection(self):
+        if not self.pages:
+            return None
+        if not any(
+            e.get("type") == "sheet_number" and e.get("follow_detected_cell", False)
+            for e in self.elements
+        ):
+            return None
+
+        gi = min(self.page_spin.value() - 1, len(self.pages) - 1)
+        path, page_index = self.pages[gi]
+        key = (path, page_index, self._file_signature(path))
+        if key in self._preview_sheet_detection_cache:
+            return self._preview_sheet_detection_cache[key]
+
+        detected = None
+        try:
+            with fitz.open(path) as doc:
+                if 0 <= page_index < doc.page_count:
+                    detected = detect_sheet_number_box_on_page(doc[page_index])
+        except Exception:
+            detected = None
+        self._preview_sheet_detection_cache[key] = detected
+        return detected
+
+    def draw_elements(self):
+        """Draw the current page using its own detected แผ่นที่ geometry."""
+        if not self.render_size:
+            return
+
+        detected = self._current_page_sheet_detection()
+        effective = preview_effective_elements(self.elements, detected)
+        if effective is self.elements:
+            return super().draw_elements()
+
+        original = self.elements
+        self.elements = effective
+        try:
+            super().draw_elements()
+        finally:
+            self.elements = original
+
+    def clear_files(self):
+        self._preview_sheet_detection_cache.clear()
+        super().clear_files()
+
+    def remove_selected_files(self):
+        self._preview_sheet_detection_cache.clear()
+        super().remove_selected_files()
+
     def _on_detect_result(self, detected):
         silent = self._detect_silent
         self._detect_job = None
@@ -263,7 +341,7 @@ class CenteredEditorTab(fast_main.FastEditorTab):
         })
 
         self.detect_status.setText(
-            "Sheet No.: AUTO-DETECTED ✓ — each page will re-detect and center on its own แผ่นที่ cell."
+            "Sheet No.: AUTO-DETECTED ✓ — preview + export now follow each page's own แผ่นที่ cell."
         )
         self.refresh_objects()
         self.draw_elements()
@@ -284,7 +362,7 @@ class CenteredPDFDrawingTool(QMainWindow):
         tabs.addTab(legacy.SplitTab(), "Split")
         self.setCentralWidget(tabs)
 
-        self.statusBar().showMessage("Ready  •  Dark CAD Responsive  •  Per-page sheet tracking")
+        self.statusBar().showMessage("Ready  •  Dark CAD Responsive  •  Live per-page sheet tracking")
 
 
 if __name__ == "__main__":
