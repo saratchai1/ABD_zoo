@@ -1,5 +1,5 @@
 #define MyAppName "PDF Drawing Tool"
-#define MyAppVersion "2.5.3"
+#define MyAppVersion "2.5.4"
 #define MyAppExeName "PDF Drawing Tool.exe"
 
 [Setup]
@@ -24,8 +24,8 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: checkedonce
 
 [Files]
-; V2.5.3 makes the live preview use the same page-local แผ่นที่ detection
-; already used by export, while retaining the unavailable-drive installer fix.
+; V2.5.4 keeps the per-page sheet numbering behavior and fixes yellow CAD
+; sticky-note / AutoCAD SHX annotations that were not consistently tagged.
 Source: "dist\PDF Drawing Tool\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
