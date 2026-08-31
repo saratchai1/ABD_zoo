@@ -39,22 +39,27 @@ jobs:
         run: |
           python -c "from centered_main import centered_write_box; d={'box_norm':[0.40,0.70,0.60,0.80],'number_box_norm':[0.51,0.71,0.59,0.79]}; w=centered_write_box(d); write_center=(w[0]+w[2])/2; erase_center=(d['number_box_norm'][0]+d['number_box_norm'][2])/2; assert abs(write_center-0.50)<1e-9, w; assert abs(erase_center-0.50)>0.01, erase_center; print('sheet center check OK: erase=',erase_center,'write=',write_center)"
 
-      - name: Per-page sheet tracking regression check
+      - name: Per-page export tracking regression check
         shell: powershell
         run: |
-          python -c "import pdf_ops; ds={'p1':{'box_norm':[0.40,0.70,0.60,0.80],'number_box_norm':[0.51,0.71,0.59,0.79]},'p2':{'box_norm':[0.35,0.64,0.55,0.74],'number_box_norm':[0.46,0.65,0.54,0.73]}}; pdf_ops.detect_sheet_number_box_on_page=lambda p: ds[p]; auto={'type':'sheet_number','box':[0.46,0.71,0.54,0.79],'erase_box':[0.51,0.71,0.59,0.79],'follow_detected_cell':True}; a,ok1,fb1=pdf_ops._page_local_elements('p1',[auto],0); b,ok2,fb2=pdf_ops._page_local_elements('p2',[auto],1); c1=(a[0]['box'][0]+a[0]['box'][2])/2; c2=(b[0]['box'][0]+b[0]['box'][2])/2; assert ok1 and ok2 and not fb1 and not fb2; assert abs(c1-0.50)<1e-9 and abs(c2-0.45)<1e-9, (c1,c2); manual={'type':'sheet_number','box':[0.1,0.1,0.2,0.2]}; m,ok,fb=pdf_ops._page_local_elements('p1',[manual],0); assert m[0]['box']==manual['box'] and not ok and not fb; print('per-page sheet tracking OK:',c1,c2)"
+          python -c "import pdf_ops; ds={'p1':{'box_norm':[0.40,0.70,0.60,0.80],'number_box_norm':[0.51,0.71,0.59,0.79]},'p2':{'box_norm':[0.35,0.64,0.55,0.74],'number_box_norm':[0.46,0.65,0.54,0.73]}}; pdf_ops.detect_sheet_number_box_on_page=lambda p: ds[p]; auto={'type':'sheet_number','box':[0.46,0.71,0.54,0.79],'erase_box':[0.51,0.71,0.59,0.79],'follow_detected_cell':True}; a,ok1,fb1=pdf_ops._page_local_elements('p1',[auto],0); b,ok2,fb2=pdf_ops._page_local_elements('p2',[auto],1); c1=(a[0]['box'][0]+a[0]['box'][2])/2; c2=(b[0]['box'][0]+b[0]['box'][2])/2; assert ok1 and ok2 and not fb1 and not fb2; assert abs(c1-0.50)<1e-9 and abs(c2-0.45)<1e-9, (c1,c2); print('per-page export tracking OK:',c1,c2)"
+
+      - name: Per-page live preview regression check
+        shell: powershell
+        run: |
+          python -c "from centered_main import preview_effective_elements; auto={'type':'sheet_number','box':[0.46,0.71,0.54,0.79],'erase_box':[0.51,0.71,0.59,0.79],'follow_detected_cell':True}; p1={'box_norm':[0.40,0.70,0.60,0.80],'number_box_norm':[0.51,0.71,0.59,0.79]}; p2={'box_norm':[0.35,0.64,0.55,0.74],'number_box_norm':[0.46,0.65,0.54,0.73]}; a=preview_effective_elements([auto],p1); b=preview_effective_elements([auto],p2); c1=(a[0]['box'][0]+a[0]['box'][2])/2; c2=(b[0]['box'][0]+b[0]['box'][2])/2; assert abs(c1-0.50)<1e-9 and abs(c2-0.45)<1e-9 and a[0]['box'] != b[0]['box']; assert auto['box']==[0.46,0.71,0.54,0.79]; print('live preview tracking OK:',c1,c2)"
 
       - name: Dark theme regression check
         shell: powershell
         run: |
-          python -c "import centered_main,dark_theme; q=dark_theme.DARK_STYLESHEET; assert 'V2.5.2' in centered_main.APP_NAME; assert '#11161d' in q; assert 'QPushButton[role=\"primary\"]' in q; assert 'QTabBar::tab:selected' in q; assert callable(dark_theme.install_dark_theme); print(centered_main.APP_NAME, 'dark-theme check OK')"
+          python -c "import centered_main,dark_theme; q=dark_theme.DARK_STYLESHEET; assert 'V2.5.3' in centered_main.APP_NAME; assert '#11161d' in q; assert 'QPushButton[role=\"primary\"]' in q; assert 'QTabBar::tab:selected' in q; assert callable(dark_theme.install_dark_theme); print(centered_main.APP_NAME, 'dark-theme check OK')"
 
       - name: Responsive toolbar regression check
         shell: powershell
         run: |
           python -c "import inspect,centered_main; s=inspect.getsource(centered_main.CenteredEditorTab._install_responsive_toolbar); assert 'responsiveToolbarShell' in s; assert 'responsiveEditToolbar' in s; assert 'responsiveViewToolbar' in s; assert 'setFixedWidth' in s; assert 'setStretchFactor' in s; assert 'setMinimumWidth(560)' in s; print('responsive toolbar check OK')"
 
-      - name: Build V2.5.2 Dark CAD responsive onedir app
+      - name: Build V2.5.3 Dark CAD responsive onedir app
         run: pyinstaller --noconfirm --clean --onedir --windowed --name "PDF Drawing Tool" centered_main.py
 
       - name: Smoke check built EXE
@@ -74,11 +79,11 @@ jobs:
       - name: Upload portable app folder
         uses: actions/upload-artifact@v4
         with:
-          name: PDF-Drawing-Tool-V2.5.2-Dark-CAD-Responsive-Portable
+          name: PDF-Drawing-Tool-V2.5.3-Dark-CAD-Responsive-Portable
           path: pdf-drawing-tool/dist/PDF Drawing Tool/**
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: PDF-Drawing-Tool-V2.5.2-Dark-CAD-Responsive-Setup
+          name: PDF-Drawing-Tool-V2.5.3-Dark-CAD-Responsive-Setup
           path: pdf-drawing-tool/installer_output/PDF_Drawing_Tool_Setup.exe
