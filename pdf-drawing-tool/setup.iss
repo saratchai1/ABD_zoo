@@ -1,5 +1,5 @@
 #define MyAppName "PDF Drawing Tool"
-#define MyAppVersion "2.5.4"
+#define MyAppVersion "2.5.5"
 #define MyAppExeName "PDF Drawing Tool.exe"
 
 [Setup]
@@ -24,8 +24,9 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: checkedonce
 
 [Files]
-; V2.5.4 keeps the per-page sheet numbering behavior and fixes yellow CAD
-; sticky-note / AutoCAD SHX annotations that were not consistently tagged.
+; V2.5.5 preserves the proven per-page sheet-number flow and changes only
+; cleanup behavior: all normal PDF comments/annotations are removed when the
+; recommended cleanup mode is enabled.
 Source: "dist\PDF Drawing Tool\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
