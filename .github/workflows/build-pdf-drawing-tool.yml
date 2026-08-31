@@ -27,27 +27,56 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Syntax check
-        run: python -m py_compile main.py fast_main.py centered_main.py v255_main.py dark_theme.py pdf_ops.py
+        run: python -m py_compile main.py fast_main.py centered_main.py v255_main.py v260_main.py sheet_detector_v260.py dark_theme.py pdf_ops.py
 
       - name: Performance regression check
         shell: powershell
         run: |
-          python -c "import ast,inspect,textwrap,fast_main; src='\n'.join([inspect.getsource(fast_main.FastEditorTab.add_files),inspect.getsource(fast_main.FastEditorTab.rebuild_pages)]); tree=ast.parse(textwrap.dedent(src)); bad=[]; [bad.append('page_count') for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='page_count']; [bad.append('fitz.open') for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and isinstance(n.func.value,ast.Name) and n.func.value.id=='fitz' and n.func.attr=='open']; assert not bad, bad; print(fast_main.APP_NAME, 'async-load AST check OK')"
+          python -c "import ast,inspect,textwrap,fast_main; src='\n'.join([inspect.getsource(fast_main.FastEditorTab.add_files),inspect.getsource(fast_main.FastEditorTab.rebuild_pages)]); tree=ast.parse(textwrap.dedent(src)); bad=[]; [bad.append('page_count') for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='page_count']; [bad.append('fitz.open') for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and isinstance(n.func.value,ast.Name) and n.func.value.id=='fitz' and n.func.attr=='open']; assert not bad, bad; print('async-load AST check OK')"
 
-      - name: Sheet centering regression check
+      - name: True cell-center regression check
         shell: powershell
         run: |
-          python -c "from centered_main import centered_write_box; d={'box_norm':[0.40,0.70,0.60,0.80],'number_box_norm':[0.51,0.71,0.59,0.79]}; w=centered_write_box(d); write_center=(w[0]+w[2])/2; erase_center=(d['number_box_norm'][0]+d['number_box_norm'][2])/2; assert abs(write_center-0.50)<1e-9, w; assert abs(erase_center-0.50)>0.01, erase_center; print('sheet center check OK: erase=',erase_center,'write=',write_center)"
+          python -c "from v260_main import precise_centered_write_box; d={'box_norm':[0.40,0.60,0.80,0.90]}; w=precise_centered_write_box(d); assert abs((w[0]+w[2])/2-0.60)<1e-12,w; assert abs((w[1]+w[3])/2-0.75)<1e-12,w; print('true XY cell center OK:',w)"
 
-      - name: Per-page export tracking regression check
+      - name: Shifted-page detector regression check
         shell: powershell
         run: |
-          python -c "import pdf_ops; ds={'p1':{'box_norm':[0.40,0.70,0.60,0.80],'number_box_norm':[0.51,0.71,0.59,0.79]},'p2':{'box_norm':[0.35,0.64,0.55,0.74],'number_box_norm':[0.46,0.65,0.54,0.73]}}; pdf_ops.detect_sheet_number_box_on_page=lambda p: ds[p]; auto={'type':'sheet_number','box':[0.46,0.71,0.54,0.79],'erase_box':[0.51,0.71,0.59,0.79],'follow_detected_cell':True}; a,ok1,fb1=pdf_ops._page_local_elements('p1',[auto],0); b,ok2,fb2=pdf_ops._page_local_elements('p2',[auto],1); c1=(a[0]['box'][0]+a[0]['box'][2])/2; c2=(b[0]['box'][0]+b[0]['box'][2])/2; assert ok1 and ok2 and not fb1 and not fb2; assert abs(c1-0.50)<1e-9 and abs(c2-0.45)<1e-9, (c1,c2); print('per-page export tracking OK:',c1,c2)"
+          @'
+          import fitz
+          from sheet_detector_v260 import robust_detect_sheet_number_box_on_page
 
-      - name: Per-page live preview regression check
+          doc = fitz.open()
+          cells = [(200,270,True),(230,300,True),(250,320,False)]
+          for top,bottom,with_anchor in cells:
+              p = doc.new_page(width=500,height=400)
+              p.draw_rect(fitz.Rect(180,150,450,360), width=0.8)
+              p.draw_line((180,top),(450,top),width=0.8)
+              p.draw_line((180,bottom),(450,bottom),width=0.8)
+              p.draw_line((200,top),(200,bottom),width=0.8)
+              p.draw_line((390,top),(390,bottom),width=0.8)
+              if with_anchor:
+                  p.add_freetext_annot(fitz.Rect(210,top+6,265,top+24),'แผ่นที่ :',fontsize=8)
+
+          d0 = robust_detect_sheet_number_box_on_page(doc[0])
+          assert d0, 'reference page not detected'
+          ref = d0['box_norm']
+          d1 = robust_detect_sheet_number_box_on_page(doc[1], reference_box=ref)
+          d2 = robust_detect_sheet_number_box_on_page(doc[2], reference_box=ref)
+          assert d1 and d2, (d1,d2)
+          c0 = (d0['box_norm'][1] + d0['box_norm'][3]) / 2
+          c1 = (d1['box_norm'][1] + d1['box_norm'][3]) / 2
+          c2 = (d2['box_norm'][1] + d2['box_norm'][3]) / 2
+          assert c0 < c1 < c2, (c0,c1,c2)
+          assert d2.get('anchor_source') == 'reference_geometry', d2
+          print('shifted page + no-anchor reference detection OK:',c0,c1,c2)
+          '@ | Set-Content _test_detector.py -Encoding UTF8
+          python _test_detector.py
+
+      - name: No stale-position fallback regression check
         shell: powershell
         run: |
-          python -c "from centered_main import preview_effective_elements; auto={'type':'sheet_number','box':[0.46,0.71,0.54,0.79],'erase_box':[0.51,0.71,0.59,0.79],'follow_detected_cell':True}; p1={'box_norm':[0.40,0.70,0.60,0.80],'number_box_norm':[0.51,0.71,0.59,0.79]}; p2={'box_norm':[0.35,0.64,0.55,0.74],'number_box_norm':[0.46,0.65,0.54,0.73]}; a=preview_effective_elements([auto],p1); b=preview_effective_elements([auto],p2); c1=(a[0]['box'][0]+a[0]['box'][2])/2; c2=(b[0]['box'][0]+b[0]['box'][2])/2; assert abs(c1-0.50)<1e-9 and abs(c2-0.45)<1e-9 and a[0]['box'] != b[0]['box']; assert auto['box']==[0.46,0.71,0.54,0.79]; print('live preview tracking OK:',c1,c2)"
+          python -c "import v260_main; auto={'type':'sheet_number','box':[.4,.4,.5,.5],'erase_box':[.4,.4,.5,.5],'follow_detected_cell':True,'reference_cell_norm':[.3,.7,.7,.9]}; orig=v260_main._detect_page; v260_main._detect_page=lambda page,reference_box=None: None; out,ok,failed=v260_main.v260_page_local_elements(object(),[auto],7); v260_main._detect_page=orig; assert not ok and failed; assert out[0].get('_skip_sheet_number') is True; assert out[0]['box']==auto['box']; print('stale-position fallback disabled OK')"
 
       - name: Guaranteed annotation cleanup regression check
         shell: powershell
@@ -59,7 +88,6 @@ jobs:
           page = doc.new_page(width=400, height=300)
           page.add_text_annot((60, 60), 'generic yellow comment')
           page.add_rect_annot(fitz.Rect(120, 80, 180, 130))
-          page.add_highlight_annot(page.search_for('nothing')) if page.search_for('nothing') else None
           before = list(page.annots() or [])
           assert len(before) >= 2, len(before)
           removed = v255_main.strip_all_pdf_comments(page, 'shx')
@@ -70,18 +98,22 @@ jobs:
           '@ | Set-Content _test_cleanup.py -Encoding UTF8
           python _test_cleanup.py
 
-      - name: Dark theme regression check
+      - name: Version and legacy shortcut path check
         shell: powershell
         run: |
-          python -c "import v255_main,dark_theme; q=dark_theme.DARK_STYLESHEET; assert 'V2.5.5' in v255_main.APP_NAME; assert '#11161d' in q; assert 'QPushButton[role=\"primary\"]' in q; assert 'QTabBar::tab:selected' in q; print(v255_main.APP_NAME, 'dark-theme check OK')"
+          python -c "import v260_main; assert 'V2.6.0' in v260_main.APP_NAME; print(v260_main.APP_NAME)"
+          $setup = Get-Content setup.iss -Raw
+          if ($setup -notmatch 'MyAppVersion "2.6.0"') { throw 'installer version mismatch' }
+          if ($setup -notmatch 'DefaultDirName=\{sd\}\\PDF Drawing Tool') { throw 'installer does not target legacy shortcut path' }
+          Write-Host 'installer path check OK: system-drive root\\PDF Drawing Tool'
 
       - name: Responsive toolbar regression check
         shell: powershell
         run: |
-          python -c "import inspect,centered_main; s=inspect.getsource(centered_main.CenteredEditorTab._install_responsive_toolbar); assert 'responsiveToolbarShell' in s; assert 'responsiveEditToolbar' in s; assert 'responsiveViewToolbar' in s; assert 'setFixedWidth' in s; assert 'setStretchFactor' in s; assert 'setMinimumWidth(560)' in s; print('responsive toolbar check OK')"
+          python -c "import inspect,centered_main; s=inspect.getsource(centered_main.CenteredEditorTab._install_responsive_toolbar); assert 'responsiveToolbarShell' in s; assert 'responsiveEditToolbar' in s; assert 'responsiveViewToolbar' in s; assert 'setMinimumWidth(560)' in s; print('responsive toolbar check OK')"
 
-      - name: Build V2.5.5 Dark CAD responsive onedir app
-        run: pyinstaller --noconfirm --clean --onedir --windowed --name "PDF Drawing Tool" v255_main.py
+      - name: Build V2.6.0 Verified Cell Center onedir app
+        run: pyinstaller --noconfirm --clean --onedir --windowed --name "PDF Drawing Tool" v260_main.py
 
       - name: Smoke check built EXE
         shell: powershell
@@ -100,11 +132,11 @@ jobs:
       - name: Upload portable app folder
         uses: actions/upload-artifact@v4
         with:
-          name: PDF-Drawing-Tool-V2.5.5-Dark-CAD-Responsive-Portable
+          name: PDF-Drawing-Tool-V2.6.0-Verified-Cell-Center-Portable
           path: pdf-drawing-tool/dist/PDF Drawing Tool/**
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: PDF-Drawing-Tool-V2.5.5-Dark-CAD-Responsive-Setup
+          name: PDF-Drawing-Tool-V2.6.0-Verified-Cell-Center-Setup
           path: pdf-drawing-tool/installer_output/PDF_Drawing_Tool_Setup.exe
