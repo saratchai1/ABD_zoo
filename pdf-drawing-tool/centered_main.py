@@ -20,10 +20,11 @@ from PySide6.QtWidgets import (
 
 import fast_main
 import main as legacy
+import pdf_ops
 from dark_theme import install_dark_theme
 from pdf_ops import detect_sheet_number_box_on_page
 
-APP_NAME = "PDF Drawing Tool V2.5.3 — Dark CAD Responsive"
+APP_NAME = "PDF Drawing Tool V2.5.4 — Dark CAD Responsive"
 SETTINGS_ORG = "TEAMG"
 
 
@@ -64,7 +65,7 @@ def preview_effective_elements(elements, detected):
     """Return preview-only elements resolved against the current page.
 
     V2.5.2 re-detected the cell only during export, so the red dashed preview
-    could still show the stored position from the first detected page. V2.5.3
+    could still show the stored position from the first detected page. V2.5.3+
     applies the same page-local geometry to the on-screen preview.
     """
     if not detected:
@@ -84,6 +85,107 @@ def preview_effective_elements(elements, detected):
     return effective
 
 
+def remove_cad_comment_annotations(page, mode: str) -> int:
+    """Remove CAD comment / sticky-note annotations robustly.
+
+    AutoCAD SHX exports are not consistent: many pages identify the yellow
+    sticky notes as "AutoCAD SHX Text", while other pages expose the exact same
+    visible yellow icon only as a generic PDF Text annotation. Older builds only
+    removed the first form, which is why some pages still showed yellow notes.
+
+    In the recommended ``shx`` mode we now remove BOTH:
+      * annotations explicitly identified as AutoCAD SHX text
+      * generic PDF Text / sticky-note annotations (the yellow speech bubbles)
+
+    ``all_text`` additionally removes FreeText annotations. ``keep`` leaves all
+    annotations untouched.
+    """
+    if mode == "keep":
+        return 0
+
+    removed = 0
+    for annot in list(page.annots() or []):
+        try:
+            type_name = str(annot.type[1]).strip().lower()
+        except Exception:
+            type_name = ""
+
+        info = annot.info or {}
+        metadata = " ".join(
+            str(info.get(key, ""))
+            for key in ("title", "subject", "content", "name")
+        ).lower()
+
+        is_shx = (
+            "autocad shx" in metadata
+            or "shx text" in metadata
+            or "autocadshx" in metadata.replace(" ", "")
+        )
+        is_sticky_note = type_name in {"text", "popup"}
+        is_free_text = type_name in {"freetext", "free text"}
+
+        if mode == "shx":
+            should_remove = is_shx or is_sticky_note
+        elif mode == "all_text":
+            should_remove = is_shx or is_sticky_note or is_free_text
+        else:
+            should_remove = is_shx
+
+        if should_remove:
+            try:
+                page.delete_annot(annot)
+                removed += 1
+            except Exception:
+                pass
+
+    return removed
+
+
+# export_editor() was imported by fast_main earlier, but its global function
+# lookup still resolves through the pdf_ops module. Replacing the function here
+# upgrades annotation cleanup without changing the stable numbering/export flow.
+pdf_ops.delete_annotations = remove_cad_comment_annotations
+
+
+class AnnotationAwareRenderJob(fast_main.RenderJob):
+    """Render preview without yellow comments when cleanup is enabled."""
+
+    def __init__(self, token, key, path, page_index, parent=None):
+        super().__init__(token, key, path, page_index, parent)
+        cleanup_mode = "shx"
+        try:
+            cleanup_mode = str(parent.cleanup_combo.currentData() or "shx")
+        except Exception:
+            pass
+        self.show_annotations = cleanup_mode == "keep"
+
+    def run(self):
+        try:
+            with fitz.open(self.path) as doc:
+                page = doc[self.page_index]
+                pix = page.get_pixmap(
+                    matrix=fitz.Matrix(fast_main.RENDER_SCALE, fast_main.RENDER_SCALE),
+                    alpha=False,
+                    annots=self.show_annotations,
+                )
+                image = fast_main.QImage(
+                    pix.samples,
+                    pix.width,
+                    pix.height,
+                    pix.stride,
+                    fast_main.QImage.Format.Format_RGB888,
+                ).copy()
+                page_pts = (float(page.rect.width), float(page.rect.height))
+            self.result.emit(self.token, self.key, image, page_pts)
+        except Exception as exc:
+            self.error.emit(self.token, self.key, str(exc))
+
+
+# FastEditorTab resolves RenderJob from the fast_main module at runtime, so this
+# keeps all async/cache behavior unchanged while only changing annotation paint.
+fast_main.RenderJob = AnnotationAwareRenderJob
+
+
 def _separator(parent=None):
     line = QFrame(parent)
     line.setFrameShape(QFrame.Shape.VLine)
@@ -94,12 +196,35 @@ def _separator(parent=None):
 
 
 class CenteredEditorTab(fast_main.FastEditorTab):
-    """V2.5.3 follows each page's sheet cell in both preview and export."""
+    """V2.5.4 follows sheet cells per page and removes yellow CAD comments."""
 
     def __init__(self):
         self._preview_sheet_detection_cache = {}
         super().__init__()
         self._install_responsive_toolbar()
+        self._install_annotation_cleanup_ui()
+
+    def _install_annotation_cleanup_ui(self):
+        idx = self.cleanup_combo.findData("shx")
+        if idx >= 0:
+            self.cleanup_combo.setItemText(
+                idx,
+                "Remove yellow CAD comments + AutoCAD SHX (recommended)",
+            )
+        idx = self.cleanup_combo.findData("all_text")
+        if idx >= 0:
+            self.cleanup_combo.setItemText(
+                idx,
+                "Remove yellow comments + SHX + FreeText",
+            )
+        self.cleanup_combo.currentIndexChanged.connect(self._on_cleanup_preview_changed)
+
+    def _on_cleanup_preview_changed(self, *_):
+        # Preview cache contains rendered page pixels, including annotation
+        # visibility. Re-render when the cleanup policy changes.
+        self._render_cache.clear()
+        if self.pages:
+            self.render_current_page()
 
     def _install_responsive_toolbar(self):
         center = self.view.parentWidget()
@@ -254,6 +379,10 @@ class CenteredEditorTab(fast_main.FastEditorTab):
 
         self.measure_label.setWordWrap(True)
         self.measure_label.setMaximumHeight(48)
+        self.measure_label.setText(
+            "V2.5.4: sheet numbering still follows each page independently. "
+            "Recommended Cleanup now removes generic yellow PDF comment bubbles as well as AutoCAD SHX notes."
+        )
 
     def _current_page_sheet_detection(self):
         if not self.pages:
@@ -341,7 +470,7 @@ class CenteredEditorTab(fast_main.FastEditorTab):
         })
 
         self.detect_status.setText(
-            "Sheet No.: AUTO-DETECTED ✓ — preview + export now follow each page's own แผ่นที่ cell."
+            "Sheet No.: AUTO-DETECTED ✓ — preview + export follow each page; yellow CAD comments are cleaned separately."
         )
         self.refresh_objects()
         self.draw_elements()
@@ -362,7 +491,9 @@ class CenteredPDFDrawingTool(QMainWindow):
         tabs.addTab(legacy.SplitTab(), "Split")
         self.setCentralWidget(tabs)
 
-        self.statusBar().showMessage("Ready  •  Dark CAD Responsive  •  Live per-page sheet tracking")
+        self.statusBar().showMessage(
+            "Ready  •  Per-page sheet tracking  •  Yellow CAD comment cleanup"
+        )
 
 
 if __name__ == "__main__":
