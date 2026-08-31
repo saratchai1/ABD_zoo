@@ -46,6 +46,7 @@ jobs:
           import fitz
           from sheet_detector_v260 import robust_detect_sheet_number_box_on_page
 
+          label = "\u0e41\u0e1c\u0e48\u0e19\u0e17\u0e35\u0e48 :"
           doc = fitz.open()
           cells = [(200,270,True),(230,300,True),(250,320,False)]
           for top,bottom,with_anchor in cells:
@@ -56,7 +57,7 @@ jobs:
               p.draw_line((200,top),(200,bottom),width=0.8)
               p.draw_line((390,top),(390,bottom),width=0.8)
               if with_anchor:
-                  p.add_freetext_annot(fitz.Rect(210,top+6,265,top+24),'แผ่นที่ :',fontsize=8)
+                  p.add_text_annot((210,top+6), label)
 
           d0 = robust_detect_sheet_number_box_on_page(doc[0])
           assert d0, 'reference page not detected'
