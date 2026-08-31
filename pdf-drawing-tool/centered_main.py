@@ -20,7 +20,7 @@ import fast_main
 import main as legacy
 from dark_theme import install_dark_theme
 
-APP_NAME = "PDF Drawing Tool V2.5.1 — Dark CAD Responsive"
+APP_NAME = "PDF Drawing Tool V2.5.2 — Dark CAD Responsive"
 SETTINGS_ORG = "TEAMG"
 
 
@@ -67,7 +67,7 @@ def _separator(parent=None):
 
 
 class CenteredEditorTab(fast_main.FastEditorTab):
-    """V2.5.1 keeps the V2.5 engine but replaces the cramped toolbar layout."""
+    """V2.5.2 keeps the responsive Dark CAD UI and follows sheet cells per page."""
 
     def __init__(self):
         super().__init__()
@@ -253,6 +253,7 @@ class CenteredEditorTab(fast_main.FastEditorTab):
             "erase_box": erase_box,
             "erase_existing": True,
             "erase_mode": "text",
+            "follow_detected_cell": True,
             "sequence_type": self.sequence_combo.currentData(),
             "sequence_start": self.sequence_start.text().strip() or "1",
             "font_name": self.font_name(),
@@ -262,7 +263,7 @@ class CenteredEditorTab(fast_main.FastEditorTab):
         })
 
         self.detect_status.setText(
-            "Sheet No.: AUTO-DETECTED ✓ — replacement number centered on the full cell."
+            "Sheet No.: AUTO-DETECTED ✓ — each page will re-detect and center on its own แผ่นที่ cell."
         )
         self.refresh_objects()
         self.draw_elements()
@@ -283,7 +284,7 @@ class CenteredPDFDrawingTool(QMainWindow):
         tabs.addTab(legacy.SplitTab(), "Split")
         self.setCentralWidget(tabs)
 
-        self.statusBar().showMessage("Ready  •  Dark CAD Responsive")
+        self.statusBar().showMessage("Ready  •  Dark CAD Responsive  •  Per-page sheet tracking")
 
 
 if __name__ == "__main__":
