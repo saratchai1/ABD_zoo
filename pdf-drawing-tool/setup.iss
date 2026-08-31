@@ -1,5 +1,5 @@
 #define MyAppName "PDF Drawing Tool"
-#define MyAppVersion "2.5.1"
+#define MyAppVersion "2.5.2"
 #define MyAppExeName "PDF Drawing Tool.exe"
 
 [Setup]
@@ -23,8 +23,8 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: checkedonce
 
 [Files]
-; V2.5.1 keeps the V2.5 Dark CAD presentation and the V2.4.2 PDF engine,
-; while replacing the cramped toolbar with a responsive two-row layout.
+; V2.5.2 keeps the V2.5.1 responsive Dark CAD presentation and adds page-local
+; แผ่นที่ detection so shifted title blocks are centered independently per page.
 Source: "dist\PDF Drawing Tool\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
