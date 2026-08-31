@@ -52,14 +52,14 @@ jobs:
       - name: Dark theme regression check
         shell: powershell
         run: |
-          python -c "import centered_main,dark_theme; q=dark_theme.DARK_STYLESHEET; assert 'V2.5.3' in centered_main.APP_NAME; assert '#11161d' in q; assert 'QPushButton[role=\"primary\"]' in q; assert 'QTabBar::tab:selected' in q; assert callable(dark_theme.install_dark_theme); print(centered_main.APP_NAME, 'dark-theme check OK')"
+          python -c "import centered_main,dark_theme; q=dark_theme.DARK_STYLESHEET; assert 'V2.5.4' in centered_main.APP_NAME; assert '#11161d' in q; assert 'QPushButton[role=\"primary\"]' in q; assert 'QTabBar::tab:selected' in q; assert callable(dark_theme.install_dark_theme); print(centered_main.APP_NAME, 'dark-theme check OK')"
 
       - name: Responsive toolbar regression check
         shell: powershell
         run: |
           python -c "import inspect,centered_main; s=inspect.getsource(centered_main.CenteredEditorTab._install_responsive_toolbar); assert 'responsiveToolbarShell' in s; assert 'responsiveEditToolbar' in s; assert 'responsiveViewToolbar' in s; assert 'setFixedWidth' in s; assert 'setStretchFactor' in s; assert 'setMinimumWidth(560)' in s; print('responsive toolbar check OK')"
 
-      - name: Build V2.5.3 Dark CAD responsive onedir app
+      - name: Build V2.5.4 Dark CAD responsive onedir app
         run: pyinstaller --noconfirm --clean --onedir --windowed --name "PDF Drawing Tool" centered_main.py
 
       - name: Smoke check built EXE
@@ -79,11 +79,11 @@ jobs:
       - name: Upload portable app folder
         uses: actions/upload-artifact@v4
         with:
-          name: PDF-Drawing-Tool-V2.5.3-Dark-CAD-Responsive-Portable
+          name: PDF-Drawing-Tool-V2.5.4-Dark-CAD-Responsive-Portable
           path: pdf-drawing-tool/dist/PDF Drawing Tool/**
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: PDF-Drawing-Tool-V2.5.3-Dark-CAD-Responsive-Setup
+          name: PDF-Drawing-Tool-V2.5.4-Dark-CAD-Responsive-Setup
           path: pdf-drawing-tool/installer_output/PDF_Drawing_Tool_Setup.exe
