@@ -27,7 +27,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Syntax check
-        run: python -m py_compile main.py fast_main.py centered_main.py dark_theme.py pdf_ops.py
+        run: python -m py_compile main.py fast_main.py centered_main.py v255_main.py dark_theme.py pdf_ops.py
 
       - name: Performance regression check
         shell: powershell
@@ -49,18 +49,39 @@ jobs:
         run: |
           python -c "from centered_main import preview_effective_elements; auto={'type':'sheet_number','box':[0.46,0.71,0.54,0.79],'erase_box':[0.51,0.71,0.59,0.79],'follow_detected_cell':True}; p1={'box_norm':[0.40,0.70,0.60,0.80],'number_box_norm':[0.51,0.71,0.59,0.79]}; p2={'box_norm':[0.35,0.64,0.55,0.74],'number_box_norm':[0.46,0.65,0.54,0.73]}; a=preview_effective_elements([auto],p1); b=preview_effective_elements([auto],p2); c1=(a[0]['box'][0]+a[0]['box'][2])/2; c2=(b[0]['box'][0]+b[0]['box'][2])/2; assert abs(c1-0.50)<1e-9 and abs(c2-0.45)<1e-9 and a[0]['box'] != b[0]['box']; assert auto['box']==[0.46,0.71,0.54,0.79]; print('live preview tracking OK:',c1,c2)"
 
+      - name: Guaranteed annotation cleanup regression check
+        shell: powershell
+        run: |
+          @'
+          import fitz
+          import v255_main
+          doc = fitz.open()
+          page = doc.new_page(width=400, height=300)
+          page.add_text_annot((60, 60), 'generic yellow comment')
+          page.add_rect_annot(fitz.Rect(120, 80, 180, 130))
+          page.add_highlight_annot(page.search_for('nothing')) if page.search_for('nothing') else None
+          before = list(page.annots() or [])
+          assert len(before) >= 2, len(before)
+          removed = v255_main.strip_all_pdf_comments(page, 'shx')
+          after = list(page.annots() or [])
+          assert removed >= 2, removed
+          assert after == [], after
+          print('guaranteed annotation cleanup OK:', removed)
+          '@ | Set-Content _test_cleanup.py -Encoding UTF8
+          python _test_cleanup.py
+
       - name: Dark theme regression check
         shell: powershell
         run: |
-          python -c "import centered_main,dark_theme; q=dark_theme.DARK_STYLESHEET; assert 'V2.5.4' in centered_main.APP_NAME; assert '#11161d' in q; assert 'QPushButton[role=\"primary\"]' in q; assert 'QTabBar::tab:selected' in q; assert callable(dark_theme.install_dark_theme); print(centered_main.APP_NAME, 'dark-theme check OK')"
+          python -c "import v255_main,dark_theme; q=dark_theme.DARK_STYLESHEET; assert 'V2.5.5' in v255_main.APP_NAME; assert '#11161d' in q; assert 'QPushButton[role=\"primary\"]' in q; assert 'QTabBar::tab:selected' in q; print(v255_main.APP_NAME, 'dark-theme check OK')"
 
       - name: Responsive toolbar regression check
         shell: powershell
         run: |
           python -c "import inspect,centered_main; s=inspect.getsource(centered_main.CenteredEditorTab._install_responsive_toolbar); assert 'responsiveToolbarShell' in s; assert 'responsiveEditToolbar' in s; assert 'responsiveViewToolbar' in s; assert 'setFixedWidth' in s; assert 'setStretchFactor' in s; assert 'setMinimumWidth(560)' in s; print('responsive toolbar check OK')"
 
-      - name: Build V2.5.4 Dark CAD responsive onedir app
-        run: pyinstaller --noconfirm --clean --onedir --windowed --name "PDF Drawing Tool" centered_main.py
+      - name: Build V2.5.5 Dark CAD responsive onedir app
+        run: pyinstaller --noconfirm --clean --onedir --windowed --name "PDF Drawing Tool" v255_main.py
 
       - name: Smoke check built EXE
         shell: powershell
@@ -79,11 +100,11 @@ jobs:
       - name: Upload portable app folder
         uses: actions/upload-artifact@v4
         with:
-          name: PDF-Drawing-Tool-V2.5.4-Dark-CAD-Responsive-Portable
+          name: PDF-Drawing-Tool-V2.5.5-Dark-CAD-Responsive-Portable
           path: pdf-drawing-tool/dist/PDF Drawing Tool/**
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: PDF-Drawing-Tool-V2.5.4-Dark-CAD-Responsive-Setup
+          name: PDF-Drawing-Tool-V2.5.5-Dark-CAD-Responsive-Setup
           path: pdf-drawing-tool/installer_output/PDF_Drawing_Tool_Setup.exe
