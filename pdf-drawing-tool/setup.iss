@@ -1,12 +1,14 @@
 #define MyAppName "PDF Drawing Tool"
-#define MyAppVersion "2.5.5"
+#define MyAppVersion "2.6.0"
 #define MyAppExeName "PDF Drawing Tool.exe"
 
 [Setup]
 AppId={{6A37C39E-0A1E-4A0C-8D0B-7F01D6E43F22}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-DefaultDirName={autopf}\PDF Drawing Tool
+; Important: the user's existing desktop shortcut points to C:\PDF Drawing Tool\PDF Drawing Tool.exe.
+; Install V2.6.0 to that exact legacy location so the shortcut cannot silently launch an older build.
+DefaultDirName={sd}\PDF Drawing Tool
 UsePreviousAppDir=no
 DefaultGroupName=PDF Drawing Tool
 DisableProgramGroupPage=yes
@@ -23,10 +25,14 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: checkedonce
 
+[InstallDelete]
+; Remove only old application binaries before copying the verified build.
+Type: files; Name: "{app}\PDF Drawing Tool.exe"
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
-; V2.5.5 preserves the proven per-page sheet-number flow and changes only
-; cleanup behavior: all normal PDF comments/annotations are removed when the
-; recommended cleanup mode is enabled.
+; V2.6.0: verified per-page title-block cell detection. The sheet-number center is
+; recalculated from the actual current-page grid and stale coordinates are never reused.
 Source: "dist\PDF Drawing Tool\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
@@ -34,4 +40,4 @@ Name: "{autoprograms}\PDF Drawing Tool"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\PDF Drawing Tool"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch PDF Drawing Tool"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch PDF Drawing Tool V2.6.0"; Flags: nowait postinstall skipifsilent
