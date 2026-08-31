@@ -49,112 +49,204 @@ def _sequence_value(kind: str, start, offset: int) -> str:
     return out
 
 
-def detect_sheet_number_box(path: str, max_pages: int = 8):
-    """Detect the title-block cell containing แผ่นที่ and return both the cell
-    and a conservative number-only area to the right of the label.
+def _longest_true_run(values):
+    best = current = 0
+    for value in values:
+        if value:
+            current += 1
+            best = max(best, current)
+        else:
+            current = 0
+    return best
+
+
+def _dedupe_sorted(values, tolerance=1.0):
+    result = []
+    for value in sorted(values):
+        if not result or abs(value - result[-1]) > tolerance:
+            result.append(value)
+    return result
+
+
+def detect_sheet_number_box_on_page(page):
+    """Detect the แผ่นที่ title-block cell on one specific page.
+
+    This is intentionally page-local. Engineering drawing PDFs sometimes use
+    slightly shifted title blocks from page to page, so one normalized box must
+    not be reused blindly for the whole document.
     """
-    def longest_true_run(values):
-        best = current = 0
-        for value in values:
-            if value:
-                current += 1
-                best = max(best, current)
-            else:
-                current = 0
-        return best
+    for annot in list(page.annots() or []):
+        info = annot.info or {}
+        content = str(info.get("content", ""))
+        normalized = content.replace(" ", "").replace(".", "").replace(":", "").replace("：", "")
+        if "แผ่นที่" not in normalized:
+            continue
 
-    def dedupe_sorted(values, tolerance=1.0):
-        result = []
-        for value in sorted(values):
-            if not result or abs(value - result[-1]) > tolerance:
-                result.append(value)
-        return result
+        label_rect = annot.rect * page.rotation_matrix
+        clip = fitz.Rect(
+            max(0.0, label_rect.x0 - 30.0),
+            max(0.0, label_rect.y0 - 50.0),
+            min(page.rect.width, label_rect.x1 + 100.0),
+            min(page.rect.height, label_rect.y1 + 40.0),
+        )
+        scale = 3.0
+        pix = page.get_pixmap(
+            matrix=fitz.Matrix(scale, scale),
+            clip=clip,
+            colorspace=fitz.csGRAY,
+            alpha=False,
+        )
+        width, height, stride, samples = pix.width, pix.height, pix.stride, pix.samples
+        threshold = 200
+        dark = []
+        for row in range(height):
+            base = row * stride
+            dark.append([samples[base + col] < threshold for col in range(width)])
 
+        horizontal = []
+        min_run = max(20, int(width * 0.35))
+        for row_index in range(height):
+            if _longest_true_run(dark[row_index]) >= min_run:
+                horizontal.append(clip.y0 + row_index / scale)
+        horizontal = _dedupe_sorted(horizontal, 1.0)
+        if len(horizontal) < 2:
+            continue
+
+        tops = [y for y in horizontal if label_rect.y0 - 8 <= y <= label_rect.y0 + 8]
+        if not tops:
+            continue
+        top = min(tops, key=lambda y: abs(y - label_rect.y0))
+
+        bottoms = [y for y in horizontal if y > label_rect.y1 + 2]
+        if not bottoms:
+            continue
+        bottom = min(bottoms)
+        if bottom - top < 8:
+            continue
+
+        row0 = max(0, int((top - clip.y0) * scale))
+        row1 = min(height, int((bottom - clip.y0) * scale) + 1)
+        vertical = []
+        for col in range(width):
+            vals = [dark[row][col] for row in range(row0, row1)]
+            if sum(vals) / max(1, len(vals)) >= 0.65:
+                vertical.append(clip.x0 + col / scale)
+        vertical = _dedupe_sorted(vertical, 1.0)
+
+        lefts = [x for x in vertical if x <= label_rect.x0 + 2]
+        rights = [x for x in vertical if x >= label_rect.x1 + 5]
+        if not lefts or not rights:
+            continue
+        left, right = max(lefts), min(rights)
+        if right - left < 15:
+            continue
+
+        # Preserve the printed label "แผ่นที่ :". Only erase in the area to its
+        # right. Writing uses a separate box centered on the whole detected cell.
+        margin_x = min(2.0, (right - left) * 0.03)
+        margin_y = min(1.5, (bottom - top) * 0.12)
+        number_left = max(label_rect.x1 + 1.5, left + (right - left) * 0.42)
+        number_left = min(number_left, right - 6.0)
+        number_box = [
+            (number_left + margin_x) / page.rect.width,
+            (top + margin_y) / page.rect.height,
+            (right - margin_x) / page.rect.width,
+            (bottom - margin_y) / page.rect.height,
+        ]
+        return {
+            "box_norm": [
+                left / page.rect.width,
+                top / page.rect.height,
+                right / page.rect.width,
+                bottom / page.rect.height,
+            ],
+            "number_box_norm": number_box,
+            "label_rect": [label_rect.x0, label_rect.y0, label_rect.x1, label_rect.y1],
+            "label": content,
+            "method": "titleblock_borders_number_area_page_local",
+        }
+    return None
+
+
+def detect_sheet_number_box(path: str, max_pages: int = 8):
+    """Detect the first usable แผ่นที่ title-block cell in a PDF.
+
+    This remains the UI's initial detection entry point. Export uses
+    detect_sheet_number_box_on_page() again for every page when the element was
+    auto-detected, so shifted title blocks are followed page by page.
+    """
     with fitz.open(path) as doc:
         limit = min(doc.page_count, max(1, int(max_pages)))
         for page_index in range(limit):
-            page = doc[page_index]
-            for annot in list(page.annots() or []):
-                info = annot.info or {}
-                content = str(info.get("content", ""))
-                normalized = content.replace(" ", "").replace(".", "").replace(":", "").replace("：", "")
-                if "แผ่นที่" not in normalized:
-                    continue
-
-                label_rect = annot.rect * page.rotation_matrix
-                clip = fitz.Rect(
-                    max(0.0, label_rect.x0 - 30.0),
-                    max(0.0, label_rect.y0 - 50.0),
-                    min(page.rect.width, label_rect.x1 + 100.0),
-                    min(page.rect.height, label_rect.y1 + 40.0),
-                )
-                scale = 3.0
-                pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=clip,
-                                      colorspace=fitz.csGRAY, alpha=False)
-                width, height, stride, samples = pix.width, pix.height, pix.stride, pix.samples
-                threshold = 200
-                dark = []
-                for row in range(height):
-                    base = row * stride
-                    dark.append([samples[base + col] < threshold for col in range(width)])
-
-                horizontal = []
-                min_run = max(20, int(width * 0.35))
-                for row_index in range(height):
-                    if longest_true_run(dark[row_index]) >= min_run:
-                        horizontal.append(clip.y0 + row_index / scale)
-                horizontal = dedupe_sorted(horizontal, 1.0)
-                if len(horizontal) < 2:
-                    continue
-                tops = [y for y in horizontal if label_rect.y0 - 8 <= y <= label_rect.y0 + 8]
-                if not tops:
-                    continue
-                top = min(tops, key=lambda y: abs(y - label_rect.y0))
-                bottoms = [y for y in horizontal if y > label_rect.y1 + 2]
-                if not bottoms:
-                    continue
-                bottom = min(bottoms)
-                if bottom - top < 8:
-                    continue
-
-                row0 = max(0, int((top - clip.y0) * scale))
-                row1 = min(height, int((bottom - clip.y0) * scale) + 1)
-                vertical = []
-                for col in range(width):
-                    vals = [dark[row][col] for row in range(row0, row1)]
-                    if sum(vals) / max(1, len(vals)) >= 0.65:
-                        vertical.append(clip.x0 + col / scale)
-                vertical = dedupe_sorted(vertical, 1.0)
-                lefts = [x for x in vertical if x <= label_rect.x0 + 2]
-                rights = [x for x in vertical if x >= label_rect.x1 + 5]
-                if not lefts or not rights:
-                    continue
-                left, right = max(lefts), min(rights)
-                if right - left < 15:
-                    continue
-
-                # Preserve the printed label "แผ่นที่ :". Only erase/write in the area
-                # to its right, with a small inset so table borders are untouched.
-                margin_x = min(2.0, (right - left) * 0.03)
-                margin_y = min(1.5, (bottom - top) * 0.12)
-                number_left = max(label_rect.x1 + 1.5, left + (right - left) * 0.42)
-                number_left = min(number_left, right - 6.0)
-                number_box = [
-                    (number_left + margin_x) / page.rect.width,
-                    (top + margin_y) / page.rect.height,
-                    (right - margin_x) / page.rect.width,
-                    (bottom - margin_y) / page.rect.height,
-                ]
-                return {
-                    "box_norm": [left / page.rect.width, top / page.rect.height,
-                                 right / page.rect.width, bottom / page.rect.height],
-                    "number_box_norm": number_box,
-                    "page_index": page_index,
-                    "label_rect": [label_rect.x0, label_rect.y0, label_rect.x1, label_rect.y1],
-                    "label": content,
-                    "method": "titleblock_borders_number_area",
-                }
+            detected = detect_sheet_number_box_on_page(doc[page_index])
+            if detected:
+                detected["page_index"] = page_index
+                return detected
     return None
+
+
+def _centered_write_box(detected):
+    """Return a write box centered on the full detected sheet-number cell."""
+    full = list(detected["box_norm"])
+    erase = list(detected.get("number_box_norm") or full)
+
+    fx1, _, fx2, _ = full
+    _, ey1, _, ey2 = erase
+    center_x = (fx1 + fx2) / 2.0
+
+    full_width = max(0.0, fx2 - fx1)
+    erase_width = max(0.0, erase[2] - erase[0])
+
+    write_width = min(erase_width * 0.68, full_width * 0.38)
+    if write_width <= 0:
+        write_width = full_width * 0.36
+
+    half = write_width / 2.0
+    x1 = max(fx1 + full_width * 0.03, center_x - half)
+    x2 = min(fx2 - full_width * 0.03, center_x + half)
+
+    clipped_width = max(0.0, x2 - x1)
+    x1 = center_x - clipped_width / 2.0
+    x2 = center_x + clipped_width / 2.0
+
+    return [x1, ey1, x2, ey2]
+
+
+def _page_local_elements(page, elements, global_page_index, log_cb=None):
+    """Resolve auto-detected sheet-number elements against the current page.
+
+    Manual sheet-number rectangles are left untouched. Auto-detected elements
+    carry follow_detected_cell=True and get fresh erase/write boxes on each
+    page. If a page cannot be detected, the stored box is used as a fallback.
+    """
+    followers = [
+        e for e in elements
+        if e.get("type") == "sheet_number" and e.get("follow_detected_cell", False)
+    ]
+    if not followers:
+        return elements, False, False
+
+    detected = detect_sheet_number_box_on_page(page)
+    if not detected:
+        if log_cb:
+            log_cb(
+                f"  Page {global_page_index + 1}: แผ่นที่ cell not detected; "
+                "using stored fallback position."
+            )
+        return elements, False, True
+
+    write_box = _centered_write_box(detected)
+    erase_box = list(detected.get("number_box_norm") or detected["box_norm"])
+    effective = []
+    for element in elements:
+        if element.get("type") == "sheet_number" and element.get("follow_detected_cell", False):
+            local = dict(element)
+            local["box"] = list(write_box)
+            local["erase_box"] = list(erase_box)
+            effective.append(local)
+        else:
+            effective.append(element)
+    return effective, True, False
 
 
 def delete_annotations(page, mode: str) -> int:
@@ -169,7 +261,11 @@ def delete_annotations(page, mode: str) -> int:
         info = annot.info or {}
         metadata = f"{info.get('title','')} {info.get('subject','')} {info.get('content','')}".lower()
         is_text = type_name == "text"
-        is_shx = "autocad shx" in metadata or "shx text" in metadata or str(info.get("title", "")).strip().lower() == "autocad shx text"
+        is_shx = (
+            "autocad shx" in metadata
+            or "shx text" in metadata
+            or str(info.get("title", "")).strip().lower() == "autocad shx text"
+        )
         should = (mode == "shx" and is_shx) or (mode == "all_text" and (is_shx or is_text))
         if should:
             try:
@@ -259,22 +355,36 @@ def apply_editor_element(page, element, global_page_index):
         text = str(element.get("text", ""))
         size = float(element.get("font_size", 12))
         alias, _ = _load_font(page, element.get("font_path"), "editor_text_font")
-        page.insert_text((x, y), text, fontsize=size, fontname=alias,
-                         color=tuple(element.get("color", [0, 0, 0])), overlay=True)
+        page.insert_text(
+            (x, y),
+            text,
+            fontsize=size,
+            fontname=alias,
+            color=tuple(element.get("color", [0, 0, 0])),
+            overlay=True,
+        )
 
     elif kind == "sheet_number":
         box = _norm_to_rect(page, element["box"])
-        text = _sequence_value(element.get("sequence_type", "number"),
-                               element.get("sequence_start", element.get("start_number", 1)),
-                               global_page_index)
+        text = _sequence_value(
+            element.get("sequence_type", "number"),
+            element.get("sequence_start", element.get("start_number", 1)),
+            global_page_index,
+        )
         size = float(element.get("font_size", 12))
         alias, pdf_font = _load_font(page, element.get("font_path"), "sheet_number_font")
         text_width = pdf_font.text_length(text, fontsize=size)
         x = box.x0 + (box.width - text_width) / 2.0
         asc, desc = pdf_font.ascender * size, pdf_font.descender * size
         baseline_y = box.y0 + (box.height - (asc - desc)) / 2.0 + asc
-        page.insert_text((x, baseline_y), text, fontsize=size, fontname=alias,
-                         color=(0, 0, 0), overlay=True)
+        page.insert_text(
+            (x, baseline_y),
+            text,
+            fontsize=size,
+            fontname=alias,
+            color=(0, 0, 0),
+            overlay=True,
+        )
 
     elif kind == "image":
         rect = _norm_to_rect(page, element["rect"])
@@ -284,16 +394,29 @@ def apply_editor_element(page, element, global_page_index):
 
     elif kind == "rectangle":
         rect = _norm_to_rect(page, element["rect"])
-        page.draw_rect(rect, color=tuple(element.get("color", [1, 0, 0])),
-                       width=float(element.get("line_width", 1)), overlay=True)
+        page.draw_rect(
+            rect,
+            color=tuple(element.get("color", [1, 0, 0])),
+            width=float(element.get("line_width", 1)),
+            overlay=True,
+        )
 
 
-def export_editor(files, output, elements, cleanup_mode="shx", merge=True,
-                  progress_cb=None, log_cb=None):
+def export_editor(
+    files,
+    output,
+    elements,
+    cleanup_mode="shx",
+    merge=True,
+    progress_cb=None,
+    log_cb=None,
+):
     total_pages = sum(page_count(p) for p in files)
     global_index = 0
     removed_total = 0
     erased_annotations = 0
+    sheet_pages_redetected = 0
+    sheet_pages_fallback = 0
     merged = fitz.open() if merge else None
     try:
         for file_idx, path in enumerate(files, start=1):
@@ -305,21 +428,34 @@ def export_editor(files, output, elements, cleanup_mode="shx", merge=True,
                     page.remove_rotation()
                 except Exception:
                     pass
+
+                # Detect before cleanup: the แผ่นที่ SHX annotation is one of the
+                # strongest anchors and may be deleted by cleanup below.
+                effective_elements, redetected, fallback = _page_local_elements(
+                    page, elements, global_index, log_cb=log_cb
+                )
+                if redetected:
+                    sheet_pages_redetected += 1
+                if fallback:
+                    sheet_pages_fallback += 1
+
                 removed_total += delete_annotations(page, cleanup_mode)
 
                 did_redact = False
                 aggressive = False
-                for element in elements:
+                for element in effective_elements:
                     yes, hard, ann = prepare_erasure(page, element, global_index)
                     did_redact = did_redact or yes
                     aggressive = aggressive or hard
                     erased_annotations += ann
                 if did_redact:
-                    page.apply_redactions(images=2 if aggressive else 0,
-                                          graphics=2 if aggressive else 0,
-                                          text=0)
+                    page.apply_redactions(
+                        images=2 if aggressive else 0,
+                        graphics=2 if aggressive else 0,
+                        text=0,
+                    )
 
-                for element in elements:
+                for element in effective_elements:
                     apply_editor_element(page, element, global_index)
 
                 global_index += 1
@@ -338,8 +474,14 @@ def export_editor(files, output, elements, cleanup_mode="shx", merge=True,
         if merge:
             merged.save(str(output), garbage=4, deflate=True)
             merged.close()
-        return {"pages": global_index, "removed_annotations": removed_total,
-                "erased_annotations": erased_annotations, "output": str(output)}
+        return {
+            "pages": global_index,
+            "removed_annotations": removed_total,
+            "erased_annotations": erased_annotations,
+            "sheet_pages_redetected": sheet_pages_redetected,
+            "sheet_pages_fallback": sheet_pages_fallback,
+            "output": str(output),
+        }
     except Exception:
         if merged is not None:
             try:
@@ -350,10 +492,14 @@ def export_editor(files, output, elements, cleanup_mode="shx", merge=True,
 
 
 def merge_pdfs(files, target):
-    out = fitz.open(); total = 0
+    out = fitz.open()
+    total = 0
     try:
         for path in files:
-            src = fitz.open(path); total += src.page_count; out.insert_pdf(src); src.close()
+            src = fitz.open(path)
+            total += src.page_count
+            out.insert_pdf(src)
+            src.close()
         out.save(str(target), garbage=4, deflate=True)
     finally:
         out.close()
@@ -361,15 +507,24 @@ def merge_pdfs(files, target):
 
 
 def split_pdf(path, output_dir, sequence_names=False, start=1, prefix="", progress_cb=None):
-    doc = fitz.open(path); outputs = []
+    doc = fitz.open(path)
+    outputs = []
     try:
         total = doc.page_count
         for i in range(total):
-            single = fitz.open(); single.insert_pdf(doc, from_page=i, to_page=i)
-            name = f"{prefix}{start+i}.pdf" if sequence_names else f"{prefix}{Path(path).stem}_page_{i+1:03d}.pdf"
+            single = fitz.open()
+            single.insert_pdf(doc, from_page=i, to_page=i)
+            name = (
+                f"{prefix}{start+i}.pdf"
+                if sequence_names
+                else f"{prefix}{Path(path).stem}_page_{i+1:03d}.pdf"
+            )
             target = Path(output_dir) / name
-            single.save(str(target), garbage=4, deflate=True); single.close(); outputs.append(str(target))
-            if progress_cb: progress_cb(i+1, total)
+            single.save(str(target), garbage=4, deflate=True)
+            single.close()
+            outputs.append(str(target))
+            if progress_cb:
+                progress_cb(i + 1, total)
         return outputs
     finally:
         doc.close()
