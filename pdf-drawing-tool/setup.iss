@@ -1,5 +1,5 @@
 #define MyAppName "PDF Drawing Tool"
-#define MyAppVersion "2.5.2.1"
+#define MyAppVersion "2.5.3"
 #define MyAppExeName "PDF Drawing Tool.exe"
 
 [Setup]
@@ -7,9 +7,6 @@ AppId={{6A37C39E-0A1E-4A0C-8D0B-7F01D6E43F22}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 DefaultDirName={autopf}\PDF Drawing Tool
-; Do not reuse a previously remembered install directory. Older builds may
-; have been installed from / to a removable, mapped, or disconnected drive,
-; which makes Inno Setup abort with "The drive or UNC share ... does not exist".
 UsePreviousAppDir=no
 DefaultGroupName=PDF Drawing Tool
 DisableProgramGroupPage=yes
@@ -27,8 +24,8 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: checkedonce
 
 [Files]
-; V2.5.2.1 installer hotfix: always starts from the local Program Files path
-; while keeping the V2.5.2 page-local แผ่นที่ detection engine.
+; V2.5.3 makes the live preview use the same page-local แผ่นที่ detection
+; already used by export, while retaining the unavailable-drive installer fix.
 Source: "dist\PDF Drawing Tool\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
