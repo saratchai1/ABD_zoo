@@ -16,7 +16,26 @@ AUTOSHEETSCAN AFTER
 Compliance before/after
 ```
 
-## Commands
+## Repository layout
+
+- `AUTOSHEET_V12_SCAN_PATCH.lsp` — V12 scan/validation shell.
+- `build_v12.py` — reproducibly combines the frozen validated V11 engine with the V12 shell.
+- `BASELINE.md` — expected V11 SHA-256 and generated V12 SHA-256.
+- `TEST_PLAN.md` — validation dataset, checklist, timing and acceptance criteria.
+
+The 800 KB standalone V12 test artifact is generated from the validated V11 baseline rather than duplicated as another hand-maintained source file. This keeps the V12 changes reviewable while preserving the exact V11 baseline by SHA-256.
+
+## Build standalone V12
+
+Place the validated `AUTOSHEET_STANDARDIZATION_V11_CTB_FORCE.lsp` beside this directory or provide its path:
+
+```bash
+python build_v12.py AUTOSHEET_STANDARDIZATION_V11_CTB_FORCE.lsp --out AUTOSHEET_V12_CLEAN_CORE.lsp
+```
+
+The builder refuses a V11 file whose SHA-256 differs from the validated baseline.
+
+## Commands in the generated V12
 
 - `AUTOSHEETSCAN` — read-only QA scan of every Paper Space layout.
 - `AUTOSHEET` — scan before, apply the proven standardization engine, scan after.
@@ -72,14 +91,15 @@ The current apply path keeps the rules already tested on ABD Zoo drawings:
 
 ## Recommended test workflow
 
-1. Open a fresh copy of a real ABD Zoo DWG.
-2. `APPLOAD` `AUTOSHEET_V12_CLEAN_CORE.lsp`.
-3. Run `AUTOSHEETVERSION`.
-4. Run `AUTOSHEETSCAN` and save the command-line output as the **before** result.
-5. Run `AUTOSHEET`.
-6. Review the **after** compliance summary.
-7. Visually inspect at least 2–3 representative layouts and Plot Preview.
-8. Save only after review.
+1. Build `AUTOSHEET_V12_CLEAN_CORE.lsp` from the validated V11 baseline.
+2. Open a fresh copy of a real ABD Zoo DWG.
+3. `APPLOAD` the generated V12 file.
+4. Run `AUTOSHEETVERSION`.
+5. Run `AUTOSHEETSCAN` and save the command-line output as the **before** result.
+6. Run `AUTOSHEET`.
+7. Review the **after** compliance summary.
+8. Visually inspect at least 2–3 representative layouts and Plot Preview.
+9. Save only after review.
 
 ## Engineering-report use
 
