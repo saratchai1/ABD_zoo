@@ -17,19 +17,32 @@ def sha256(path: Path) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build the standalone AUTOSHEET V12 LSP by appending the V12 scan/validation shell to the frozen V11 engine."
+        description=(
+            "Build the standalone AUTOSHEET V12.1 LSP by appending the V12 scan shell "
+            "and the live-scan robustness fix to the frozen validated V11 engine."
+        )
     )
-    parser.add_argument("v11", type=Path, help="Path to AUTOSHEET_STANDARDIZATION_V11_CTB_FORCE.lsp")
+    parser.add_argument(
+        "v11",
+        type=Path,
+        help="Path to AUTOSHEET_STANDARDIZATION_V11_CTB_FORCE.lsp",
+    )
     parser.add_argument(
         "--patch",
         type=Path,
         default=Path(__file__).with_name("AUTOSHEET_V12_SCAN_PATCH.lsp"),
-        help="V12 patch file",
+        help="V12 scan/validation shell",
+    )
+    parser.add_argument(
+        "--scan-fix",
+        type=Path,
+        default=Path(__file__).with_name("AUTOSHEET_V12_1_SCAN_FIX.lsp"),
+        help="V12.1 live-scan robustness fix",
     )
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path("AUTOSHEET_V12_CLEAN_CORE.lsp"),
+        default=Path("AUTOSHEET_V12_1_SCAN_FIX.lsp"),
         help="Output standalone LSP",
     )
     args = parser.parse_args()
@@ -43,9 +56,11 @@ def main() -> None:
             "Use the validated V11 baseline or update the build intentionally."
         )
 
-    base = args.v11.read_text(encoding="utf-8")
-    patch = args.patch.read_text(encoding="utf-8")
-    output = base.rstrip() + "\n\n" + patch.lstrip()
+    base = args.v11.read_text(encoding="utf-8").rstrip()
+    patch = args.patch.read_text(encoding="utf-8").strip()
+    scan_fix = args.scan_fix.read_text(encoding="utf-8").strip()
+
+    output = base + "\n\n" + patch + "\n\n" + scan_fix + "\n"
     args.out.write_text(output, encoding="utf-8")
 
     print(f"Built: {args.out}")
