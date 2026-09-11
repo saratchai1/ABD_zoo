@@ -296,3 +296,470 @@
 (princ "\nRecommended: AUTOSHEETSCAN first, then AUTOSHEET on a backup DWG.")
 (princ "\nCommands: AUTOSHEETSCAN, AUTOSHEET, AUTOSHEETCTB, AUTOSHEETVERSION")
 (princ)
+
+;;; ================================================================
+;;; AUTOSHEET V12.1 SCAN ROBUSTNESS FIX
+;;; 2026-09-11
+;;; ================================================================
+(setq *AS12:Version* "2026-09-11-V12.1-SCAN-FIX")
+
+(defun AS12:ValueString (v)
+  (cond
+    ((null v) "<none>")
+    ((= (type v) 'STR) v)
+    (T (vl-princ-to-string v))))
+
+(defun AS12:GetConfigName (layout / r)
+  (setq r (vl-catch-all-apply 'vla-get-ConfigName (list layout)))
+  (if (vl-catch-all-error-p r) nil r))
+
+(defun AS12:GetMediaName (layout / r)
+  (setq r (vl-catch-all-apply 'vla-get-CanonicalMediaName (list layout)))
+  (if (vl-catch-all-error-p r) nil r))
+
+(defun AS12:GetStyleSheet (layout / r)
+  (setq r (vl-catch-all-apply 'vla-get-StyleSheet (list layout)))
+  (if (vl-catch-all-error-p r) nil r))
+
+(defun AS12:CandidateTitleBoxes (layout / obj name candidates result)
+  (setq candidates nil)
+  (vlax-for obj (vla-get-Block layout)
+    (setq name (AS12:ObjName obj))
+    (if (= name "ACDBBLOCKREFERENCE")
+      (progn
+        (setq result
+          (vl-catch-all-apply 'A3V38:TitleBoxCandidateP (list obj)))
+        (if (and (not (vl-catch-all-error-p result)) result)
+          (setq candidates (cons obj candidates))))))
+  candidates)
+
+(defun AS12:TitleDetection (layout / ref candidates)
+  (setq ref (A3V51:LayoutTitleReference layout))
+  (if ref
+    (list 'PROFILED ref 1)
+    (progn
+      (setq candidates (AS12:CandidateTitleBoxes layout))
+      (if candidates
+        (list 'UNPROFILED nil (length candidates))
+        (list 'NONE nil 0)))))
+
+(defun AS12:PrintStatus (status label detail counts / pass warn fail prefix)
+  (setq pass (car counts)
+        warn (cadr counts)
+        fail (caddr counts)
+        prefix
+          (cond
+            ((eq status 'PASS) "PASS")
+            ((eq status 'WARN) "WARN")
+            (T "FAIL")))
+  (princ
+    (strcat
+      "\n  " prefix "  " label
+      (if detail (strcat " = " (AS12:ValueString detail)) "")))
+  (cond
+    ((eq status 'PASS) (list (1+ pass) warn fail))
+    ((eq status 'WARN) (list pass (1+ warn) fail))
+    (T (list pass warn (1+ fail)))))
+
+(defun AS12:PlotterOKP (layout / c)
+  (setq c (AS12:GetConfigName layout))
+  (and (= (type c) 'STR)
+       (= (strcase c) (strcase *AS12:TargetPlotter*))))
+
+(defun AS12:PaperOKP (layout / media p)
+  (setq media (AS12:GetMediaName layout)
+        p (AS3:GetPaperSize layout))
+  (and (= (type media) 'STR)
+       (vl-string-search "A3" (strcase media))
+       p
+       (> (car p) (cadr p))))
+
+(defun AS12:CTBOKP (layout / ctb)
+  (setq ctb (AS12:GetStyleSheet layout))
+  (and (= (type ctb) 'STR)
+       (= (strcase ctb) (strcase *AS12:TargetCTB*))))
+
+(defun AS12:CountPaths (layout / block obj name attrs a n)
+  (setq block (vla-get-Block layout)
+        n 0)
+  (vlax-for obj block
+    (setq name (AS12:ObjName obj))
+    (cond
+      ((and
+         (member name '("ACDBTEXT" "ACDBMTEXT" "ACDBMLEADER"))
+         (vlax-property-available-p obj 'TextString)
+         (SA3:SourcePathTextP (AS12:SafeText obj)))
+       (setq n (1+ n)))
+      ((and
+         (= name "ACDBBLOCKREFERENCE")
+         (AS12:BoolTrueP (AS12:SafeGet obj 'HasAttributes)))
+       (setq attrs (SA3:BlockAttributes obj))
+       (foreach a attrs
+         (if (SA3:SourcePathTextP (AS12:SafeText a))
+           (setq n (1+ n)))))))
+  n)
+
+(defun AS12:ScanLayout
+  (doc layout /
+       detect mode candidateCount
+       fields titles codes scales
+       vp red paths counts
+       plotType ctb media config)
+
+  (setq counts '(0 0 0)
+        detect (AS12:TitleDetection layout)
+        mode (car detect)
+        candidateCount (caddr detect))
+
+  (princ (strcat "\n\n[LAYOUT] " (vla-get-Name layout)))
+
+  (cond
+    ((eq mode 'PROFILED)
+     (setq counts
+       (AS12:PrintStatus 'PASS "Title box" "recognized profile" counts)))
+    ((eq mode 'UNPROFILED)
+     (setq counts
+       (AS12:PrintStatus
+         'WARN
+         "Title box"
+         (strcat "candidate block(s)=" (itoa candidateCount)
+                 "; profile unknown -> field QA skipped")
+         counts)))
+    (T
+     (setq counts
+       (AS12:PrintStatus 'FAIL "Title box" "no candidate detected" counts))))
+
+  (if (eq mode 'PROFILED)
+    (progn
+      (setq fields (AS12:CollectTitleFields layout)
+            titles (nth 1 fields)
+            codes (nth 2 fields)
+            scales (nth 3 fields))
+      (setq counts
+        (AS12:PrintStatus
+          (if (AS12:CodesOKP codes) 'PASS 'FAIL)
+          "Drawing code"
+          (if (> (length codes) 0) "hyphen format" "missing")
+          counts))
+      (setq counts
+        (AS12:PrintStatus
+          (if (AS12:ScalesOKP scales) 'PASS 'FAIL)
+          "Title scale"
+          (if (> (length scales) 0) "A3/A1" "missing")
+          counts))
+      (setq counts
+        (AS12:PrintStatus
+          (if (AS12:FieldTypographyOKP titles) 'PASS 'FAIL)
+          "Title typography"
+          "Cordia Shx / H=0.0015 / W=1.0"
+          counts))
+      (setq counts
+        (AS12:PrintStatus
+          (if (AS12:FieldTypographyOKP codes) 'PASS 'FAIL)
+          "Code typography"
+          "Cordia Shx / H=0.0015 / W=1.0"
+          counts))
+      (setq counts
+        (AS12:PrintStatus
+          (if (AS12:FieldTypographyOKP scales) 'PASS 'FAIL)
+          "Scale typography"
+          "Cordia Shx / H=0.0015 / W=1.0"
+          counts)))
+    (progn
+      (setq counts
+        (AS12:PrintStatus 'WARN "Drawing code" "skipped - titlebox profile unknown" counts))
+      (setq counts
+        (AS12:PrintStatus 'WARN "Title scale" "skipped - titlebox profile unknown" counts))
+      (setq counts
+        (AS12:PrintStatus 'WARN "Title typography" "skipped - titlebox profile unknown" counts))
+      (setq counts
+        (AS12:PrintStatus 'WARN "Code typography" "skipped - titlebox profile unknown" counts))
+      (setq counts
+        (AS12:PrintStatus 'WARN "Scale typography" "skipped - titlebox profile unknown" counts))))
+
+  (setq vp (AS12:ViewportStatus layout))
+  (setq counts
+    (AS12:PrintStatus
+      (if (= (cadr vp) 0) 'PASS 'FAIL)
+      "Viewport layer"
+      (strcat "floating=" (itoa (car vp))
+              ", non-Defpoints=" (itoa (cadr vp)))
+      counts))
+
+  (setq red (AS12:CountRed doc layout))
+  (setq counts
+    (AS12:PrintStatus
+      (if (= red 0) 'PASS 'FAIL)
+      "Red cleanup"
+      (strcat "remaining=" (itoa red))
+      counts))
+
+  (setq paths (AS12:CountPaths layout))
+  (setq counts
+    (AS12:PrintStatus
+      (if (= paths 0) 'PASS 'FAIL)
+      "Source path cleanup"
+      (strcat "remaining=" (itoa paths))
+      counts))
+
+  (setq config (AS12:GetConfigName layout))
+  (setq counts
+    (AS12:PrintStatus
+      (if (AS12:PlotterOKP layout) 'PASS 'FAIL)
+      "Plotter"
+      (AS12:ValueString config)
+      counts))
+
+  (setq media (AS12:GetMediaName layout))
+  (setq counts
+    (AS12:PrintStatus
+      (if (AS12:PaperOKP layout) 'PASS 'FAIL)
+      "Paper/orientation"
+      (AS12:ValueString media)
+      counts))
+
+  (setq plotType (AS12:SafeGet layout 'PlotType))
+  (setq counts
+    (AS12:PrintStatus
+      (if (= plotType 4) 'PASS 'FAIL)
+      "Plot area"
+      (if (= plotType 4) "Window" (AS12:ValueString plotType))
+      counts))
+
+  (setq counts
+    (AS12:PrintStatus
+      (if (AS12:BoolTrueP (AS12:SafeGet layout 'CenterPlot)) 'PASS 'FAIL)
+      "Center plot"
+      "On"
+      counts))
+
+  (setq counts
+    (AS12:PrintStatus
+      (if (AS12:ScaleOKP layout) 'PASS 'FAIL)
+      "Plot scale"
+      "1 mm = 0.001 unit"
+      counts))
+
+  (setq ctb (AS12:GetStyleSheet layout))
+  (setq counts
+    (AS12:PrintStatus
+      (if (AS12:CTBOKP layout) 'PASS 'FAIL)
+      "Plot style"
+      (AS12:ValueString ctb)
+      counts))
+
+  (setq counts
+    (AS12:PrintStatus
+      (if (AS12:BoolTrueP (AS12:SafeGet layout 'PlotWithPlotStyles)) 'PASS 'FAIL)
+      "Plot with styles"
+      "On"
+      counts))
+
+  (setq counts
+    (AS12:PrintStatus
+      (if (AS12:BoolTrueP (AS12:SafeGet layout 'PlotWithLineweights)) 'PASS 'FAIL)
+      "Lineweights"
+      "On"
+      counts))
+
+  (setq counts
+    (AS12:PrintStatus
+      (if (AS12:BoolTrueP (AS12:SafeGet layout 'PlotViewportsFirst)) 'PASS 'FAIL)
+      "Paper space last"
+      "On"
+      counts))
+
+  (princ
+    (strcat "\n  SUMMARY pass=" (itoa (car counts))
+            " warn=" (itoa (cadr counts))
+            " fail=" (itoa (caddr counts))))
+
+  (list
+    (vla-get-Name layout)
+    (car counts)
+    (cadr counts)
+    (caddr counts)))
+
+(princ "\nAUTOSHEET V12.1 scan-fix loaded.")
+(princ "\nRun AUTOSHEETSCAN again before running AUTOSHEET.")
+(princ)
+
+;;; ================================================================
+;;; AUTOSHEET V12.2 TITLEBOX DIAGNOSTIC
+;;; 2026-09-11
+;;; ================================================================
+
+(setq *AS12:Version* "2026-09-11-V12.2-TITLE-DIAG")
+
+(defun AS12:PointString (p)
+  (if (and p (listp p) (>= (length p) 2))
+    (strcat
+      "(" (rtos (car p) 2 6)
+      "," (rtos (cadr p) 2 6)
+      (if (>= (length p) 3) (strcat "," (rtos (caddr p) 2 6)) "")
+      ")")
+    "<none>"))
+
+(defun AS12:GetInsertionPoint (obj / r)
+  (setq r (vl-catch-all-apply 'vla-get-InsertionPoint (list obj)))
+  (if (vl-catch-all-error-p r) nil (SA3:ToList r)))
+
+(defun AS12:GetBBoxSafe (obj / mn mx r)
+  (setq mn nil mx nil
+        r (vl-catch-all-apply 'vla-GetBoundingBox (list obj 'mn 'mx)))
+  (if (or (vl-catch-all-error-p r) (null mn) (null mx))
+    nil
+    (list (SA3:ToList mn) (SA3:ToList mx))))
+
+(defun AS12:BBoxString (bbox)
+  (if bbox
+    (strcat
+      (AS12:PointString (car bbox))
+      " -> "
+      (AS12:PointString (cadr bbox)))
+    "<none>"))
+
+(defun AS12:BlockNameSafe (obj / r)
+  (setq r (vl-catch-all-apply 'SA3:BlockName (list obj)))
+  (if (vl-catch-all-error-p r) "<error>" (AS12:ValueString r)))
+
+(defun AS12:HasAttributesP (obj / r)
+  (setq r (AS12:SafeGet obj 'HasAttributes))
+  (AS12:BoolTrueP r))
+
+(defun AS12:KeywordTextP (txt / up)
+  (setq up (strcase (if (= (type txt) 'STR) txt "")))
+  (or
+    (vl-string-search "DRAWING" up)
+    (vl-string-search "TITLE" up)
+    (vl-string-search "SCALE" up)
+    (vl-string-search "SHEET" up)
+    (vl-string-search "PROJECT" up)
+    (vl-string-search "NZ1-" up)
+    (vl-string-search "RSDT" up)
+    (vl-string-search "ABD" up)
+    (vl-string-search "มาตราส่วน" txt)))
+
+(defun AS12:DiagBlockRef (obj idx / name ip bbox sx sy rot attrs)
+  (setq name (AS12:BlockNameSafe obj)
+        ip (AS12:GetInsertionPoint obj)
+        bbox (AS12:GetBBoxSafe obj)
+        sx (AS12:SafeGet obj 'XScaleFactor)
+        sy (AS12:SafeGet obj 'YScaleFactor)
+        rot (AS12:SafeGet obj 'Rotation)
+        attrs (AS12:HasAttributesP obj))
+  (princ
+    (strcat
+      "\n  [BLOCK " (itoa idx) "]"
+      " name=" name
+      " | ins=" (AS12:PointString ip)
+      " | bbox=" (AS12:BBoxString bbox)
+      " | sx=" (AS12:ValueString sx)
+      " | sy=" (AS12:ValueString sy)
+      " | rot=" (AS12:ValueString rot)
+      " | attrs=" (if attrs "YES" "NO"))))
+
+(defun AS12:DiagText (obj idx / txt p bbox)
+  (setq txt (AS12:SafeText obj)
+        p (SA3:EntityPoint obj)
+        bbox (AS12:GetBBoxSafe obj))
+  (princ
+    (strcat
+      "\n  [TEXT " (itoa idx) "] "
+      "\"" txt "\""
+      " | pos=" (AS12:PointString p)
+      " | bbox=" (AS12:BBoxString bbox))))
+
+(defun AS12:FindLayoutByName (doc name / found lay)
+  (setq found nil)
+  (vlax-for lay (vla-get-Layouts doc)
+    (if (= (strcase (vla-get-Name lay)) (strcase name))
+      (setq found lay)))
+  found)
+
+(defun AS12:DiagCurrentTitle
+  (doc / tab layout block obj name blockCount textCount keywordCount
+         paper rotation scalePair config media ctb)
+
+  (setq tab (getvar "CTAB")
+        layout (AS12:FindLayoutByName doc tab))
+
+  (if (or (null layout) (= (strcase tab) "MODEL"))
+    (princ "\nAUTOSHEETDIAGTITLE: switch to a Paper Space layout first.")
+    (progn
+      (setq block (vla-get-Block layout)
+            blockCount 0
+            textCount 0
+            keywordCount 0)
+
+      (princ "\n================================================")
+      (princ "\nAUTOSHEETDIAGTITLE V12.2 - READ ONLY")
+      (princ (strcat "\nLayout: " tab))
+      (princ "\n================================================")
+
+      (princ "\n\n[TOP-LEVEL BLOCK REFERENCES]")
+      (vlax-for obj block
+        (setq name (AS12:ObjName obj))
+        (if (= name "ACDBBLOCKREFERENCE")
+          (progn
+            (setq blockCount (1+ blockCount))
+            (AS12:DiagBlockRef obj blockCount))))
+      (if (= blockCount 0)
+        (princ "\n  <none>"))
+
+      (princ "\n\n[KEYWORD / DRAWING-ID TEXT]")
+      (vlax-for obj block
+        (if (AS12:TextP obj)
+          (progn
+            (setq textCount (1+ textCount))
+            (if (AS12:KeywordTextP (AS12:SafeText obj))
+              (progn
+                (setq keywordCount (1+ keywordCount))
+                (AS12:DiagText obj keywordCount))))))
+      (if (= keywordCount 0)
+        (princ "\n  <none at top level>"))
+
+      (setq paper (AS3:GetPaperSize layout)
+            rotation (AS12:SafeGet layout 'PlotRotation)
+            scalePair (AS3:ScalePair layout)
+            config (AS12:GetConfigName layout)
+            media (AS12:GetMediaName layout)
+            ctb (AS12:GetStyleSheet layout))
+
+      (princ "\n\n[PLOT RAW VALUES]")
+      (princ (strcat "\n  ConfigName         = " (AS12:ValueString config)))
+      (princ (strcat "\n  CanonicalMediaName = " (AS12:ValueString media)))
+      (princ (strcat "\n  PlotRotation       = " (AS12:ValueString rotation)))
+      (princ
+        (strcat
+          "\n  PaperSize          = "
+          (if paper
+            (strcat (rtos (car paper) 2 6) " x " (rtos (cadr paper) 2 6))
+            "<none>")))
+      (princ
+        (strcat
+          "\n  ScalePair          = "
+          (if scalePair
+            (strcat
+              "(" (AS12:ValueString (car scalePair))
+              ", " (AS12:ValueString (cadr scalePair)) ")")
+            "<none>")))
+      (princ (strcat "\n  StyleSheet         = " (AS12:ValueString ctb)))
+
+      (princ "\n\n[COUNTS]")
+      (princ (strcat "\n  Block refs          = " (itoa blockCount)))
+      (princ (strcat "\n  Top-level text objs = " (itoa textCount)))
+      (princ (strcat "\n  Keyword text objs   = " (itoa keywordCount)))
+      (princ "\n================================================")
+      (princ "\nCopy this whole diagnostic output back for profile design."))))
+
+(defun c:AUTOSHEETDIAGTITLE (/ acad doc)
+  (vl-load-com)
+  (setq acad (vlax-get-acad-object)
+        doc (vla-get-ActiveDocument acad))
+  (AS12:DiagCurrentTitle doc)
+  (princ))
+
+(princ "\nAUTOSHEET V12.2 title diagnostic loaded.")
+(princ "\nWhen title box is not detected: switch to one Paper Space layout and run AUTOSHEETDIAGTITLE.")
+(princ)
